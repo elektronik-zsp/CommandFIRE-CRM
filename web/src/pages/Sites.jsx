@@ -47,9 +47,13 @@ export default function Sites() {
         <Table rows={rows} empty="Brak obiektów" onRow={(s) => nav(`/obiekty/${s.id}`)} columns={[
           { key: 'name', label: 'Obiekt', render: (s) => <div><div className="font-medium">{s.name}</div><div className="text-[12px] text-muted">{s.client_name}</div></div> },
           { key: 'city', label: 'Lokalizacja', className: 'hidden md:table-cell', render: (s) => <div className="text-[13px]">{s.address}<div className="text-muted">{s.city}</div></div> },
-          { key: 'panel', label: 'System', className: 'hidden lg:table-cell', render: (s) => (
+          { key: 'panel', label: 'Centrala', className: 'hidden lg:table-cell', render: (s) => (
             <div className="text-[13px]">
-              <div>{[s.panel_manufacturer, s.panel_model].filter(Boolean).join(' ') || '—'}</div>
+              {s.panels?.length ? s.panels.map((p) => (
+                <div key={p.id}><span className="font-medium">{p.name}</span>
+                  {/* model from the panel card, else the one noted on the site */}
+                  <span className="text-ink-3"> · {[p.manufacturer, p.model].filter(Boolean).join(' ') || [s.panel_manufacturer, s.panel_model].filter(Boolean).join(' ') || 'model nieuzupełniony'}</span></div>
+              )) : <div>{[s.panel_manufacturer, s.panel_model].filter(Boolean).join(' ') || '—'}{s.panels && <span className="text-muted text-[12px]"> · bez karty centrali</span>}</div>}
               <div className="flex items-center gap-2 text-muted text-[12px]">{s.system_type}{s.loops ? ` · ${s.loops} pętli` : ''}{s.monitoring && <span className="inline-flex items-center gap-0.5 text-info"><Radio size={11} />PSP</span>}</div>
             </div>
           ) },

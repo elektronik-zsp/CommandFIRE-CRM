@@ -556,11 +556,19 @@ const actions = {
   },
 
   // --- sites ---
-  async 'sites.list'({ search, client_id }) {
-    return q(`SELECT * FROM (${SITE_SELECT}) x
-      WHERE ($1::text IS NULL OR name ILIKE '%'||$1||'%' OR city ILIKE '%'||$1||'%' OR address ILIKE '%'||$1||'%' OR client_name ILIKE '%'||$1||'%' OR panel_manufacturer ILIKE '%'||$1||'%')
+  // panels = assigned panel cards (name, manufacturer, model); null without panels.view
+  async 'sites.list'({ search, client_id }, user) {
+    const panelsOk = can(user, 'panels.view');
+    const rows = await q(`SELECT x.*, (SELECT COALESCE(json_agg(json_build_object('id', p.id, 'name', p.name, 'manufacturer', p.manufacturer, 'model', p.model) ORDER BY p.name, p.id), '[]')
+          FROM panel_sites ps JOIN panels p ON p.id=ps.panel_id WHERE ps.site_id=x.id) AS panels
+      FROM (${SITE_SELECT}) x
+      WHERE ($1::text IS NULL OR name ILIKE '%'||$1||'%' OR city ILIKE '%'||$1||'%' OR address ILIKE '%'||$1||'%' OR client_name ILIKE '%'||$1||'%'
+          OR panel_manufacturer ILIKE '%'||$1||'%' OR panel_model ILIKE '%'||$1||'%'
+          OR ($3 AND EXISTS (SELECT 1 FROM panel_sites ps JOIN panels p ON p.id=ps.panel_id WHERE ps.site_id=x.id
+            AND concat_ws(' ', p.name, p.manufacturer, p.model) ILIKE '%'||$1||'%')))
         AND ($2::int IS NULL OR client_id=$2)
-      ORDER BY next_due NULLS LAST, name`, [search || null, client_id || null]);
+      ORDER BY next_due NULLS LAST, name`, [search || null, client_id || null, panelsOk]);
+    return panelsOk ? rows : rows.map((r) => ({ ...r, panels: null }));
   },
   // parts the user may not see come back as null
   async 'sites.get'({ id }, user) {
