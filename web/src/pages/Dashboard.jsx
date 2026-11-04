@@ -95,7 +95,7 @@ export default function Dashboard() {
       </div>
 
       <div className="grid xl:grid-cols-[1.45fr_1fr] gap-4 mb-4">
-        {sites && <Card title="Terminy przeglądów — 30 dni" pad={false} actions={<Link to="/przeglady" className="text-[12px] text-muted hover:text-ink">Harmonogram →</Link>}>
+        {sites && <Card title="Terminy przeglądów — 30 dni" pad={false} actions={can('inspections.view') && <Link to="/przeglady" className="text-[12px] text-muted hover:text-ink">Harmonogram →</Link>}>
           <Table
             rows={sites}
             empty="Brak przeglądów w najbliższych 30 dniach"
