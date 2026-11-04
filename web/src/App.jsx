@@ -14,6 +14,7 @@ import Inspections from './pages/Inspections';
 import InspectionDetail from './pages/InspectionDetail';
 import Tickets from './pages/Tickets';
 import Users from './pages/Users';
+import PanelDetail from './pages/PanelDetail';
 
 export default function App() {
   const [user, setUser] = useState(null);
@@ -40,6 +41,7 @@ export default function App() {
           <Route path="klienci/:id" element={<ClientDetail />} />
           <Route path="obiekty" element={<Sites />} />
           <Route path="obiekty/:id" element={<SiteDetail />} />
+          <Route path="centrale/:id" element={<PanelDetail />} />
           <Route path="przeglady" element={<Inspections />} />
           <Route path="przeglady/:id" element={<InspectionDetail />} />
           <Route path="zgloszenia" element={<Tickets />} />

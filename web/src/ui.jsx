@@ -171,7 +171,16 @@ export function Field({ label, children, span, hint }) {
  * Generic record form in a modal.
  * fields: [{ name, label, type, options, required, span, placeholder, hint }]
  */
-export function FormModal({ title, fields, initial = {}, onSubmit, onClose, onDelete, wide, submitLabel = 'Zapisz' }) {
+export function FormModal({ title, onClose, wide, ...props }) {
+  return (
+    <Modal title={title} onClose={onClose} wide={wide}>
+      <RecordForm {...props} onClose={onClose} />
+    </Modal>
+  );
+}
+
+// The form body of FormModal, usable inside other layouts (e.g. a tabbed modal).
+export function RecordForm({ fields, initial = {}, onSubmit, onClose, onDelete, submitLabel = 'Zapisz' }) {
   const [values, setValues] = useState(initial);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
@@ -191,41 +200,39 @@ export function FormModal({ title, fields, initial = {}, onSubmit, onClose, onDe
   }
 
   return (
-    <Modal title={title} onClose={onClose} wide={wide}>
-      <form onSubmit={submit} className="flex flex-col gap-5">
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3.5">
-          {fields.map((f) => {
-            if (f.section) return <div key={f.section} className="sm:col-span-2 pt-2 mt-1 border-t border-line font-display uppercase tracking-wider text-[13px] text-ink-3">{f.section}</div>;
-            const v = values[f.name] ?? '';
-            const common = { value: v, required: f.required, placeholder: f.placeholder, onChange: (e) => set(f.name, e.target.value) };
-            let input;
-            if (f.type === 'textarea') input = <textarea {...common} rows={f.rows || 3} className={`${INPUT} w-full h-auto py-2 resize-y`} />;
-            else if (f.type === 'select') input = <Select {...common} options={f.options} placeholder={f.required ? undefined : '—'} />;
-            else if (f.type === 'checkbox') input = (
-              <span className="flex items-center gap-2 h-9">
-                <input type="checkbox" checked={!!values[f.name]} onChange={(e) => set(f.name, e.target.checked)} className="w-4 h-4 accent-signal" />
-                <span className="text-[13px]">{f.checkLabel || 'Tak'}</span>
-              </span>
-            );
-            else input = <Input type={f.type || 'text'} {...common} list={f.list ? `${f.name}-list` : undefined} />;
-            return (
-              <Field key={f.name} label={f.label + (f.required ? ' *' : '')} span={f.span} hint={f.hint}>
-                {input}
-                {f.list && <datalist id={`${f.name}-list`}>{f.list.map((o) => <option key={o} value={o} />)}</datalist>}
-              </Field>
-            );
-          })}
+    <form onSubmit={submit} className="flex flex-col gap-5">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3.5">
+        {fields.map((f) => {
+          if (f.section) return <div key={f.section} className="sm:col-span-2 pt-2 mt-1 border-t border-line font-display uppercase tracking-wider text-[13px] text-ink-3">{f.section}</div>;
+          const v = values[f.name] ?? '';
+          const common = { value: v, required: f.required, placeholder: f.placeholder, onChange: (e) => set(f.name, e.target.value) };
+          let input;
+          if (f.type === 'textarea') input = <textarea {...common} rows={f.rows || 3} className={`${INPUT} w-full h-auto py-2 resize-y`} />;
+          else if (f.type === 'select') input = <Select {...common} options={f.options} placeholder={f.required ? undefined : '—'} />;
+          else if (f.type === 'checkbox') input = (
+            <span className="flex items-center gap-2 h-9">
+              <input type="checkbox" checked={!!values[f.name]} onChange={(e) => set(f.name, e.target.checked)} className="w-4 h-4 accent-signal" />
+              <span className="text-[13px]">{f.checkLabel || 'Tak'}</span>
+            </span>
+          );
+          else input = <Input type={f.type || 'text'} {...common} list={f.list ? `${f.name}-list` : undefined} />;
+          return (
+            <Field key={f.name} label={f.label + (f.required ? ' *' : '')} span={f.span} hint={f.hint}>
+              {input}
+              {f.list && <datalist id={`${f.name}-list`}>{f.list.map((o) => <option key={o} value={o} />)}</datalist>}
+            </Field>
+          );
+        })}
+      </div>
+      {error && <ErrorBox>{error}</ErrorBox>}
+      <div className="flex items-center justify-between gap-2 pt-1">
+        <div>{onDelete && <Button type="button" variant="danger" onClick={remove} disabled={busy}>Usuń</Button>}</div>
+        <div className="flex gap-2">
+          <Button type="button" variant="ghost" onClick={onClose}>Anuluj</Button>
+          <Button type="submit" loading={busy}>{submitLabel}</Button>
         </div>
-        {error && <ErrorBox>{error}</ErrorBox>}
-        <div className="flex items-center justify-between gap-2 pt-1">
-          <div>{onDelete && <Button type="button" variant="danger" onClick={remove} disabled={busy}>Usuń</Button>}</div>
-          <div className="flex gap-2">
-            <Button type="button" variant="ghost" onClick={onClose}>Anuluj</Button>
-            <Button type="submit" loading={busy}>{submitLabel}</Button>
-          </div>
-        </div>
-      </form>
-    </Modal>
+      </div>
+    </form>
   );
 }
 

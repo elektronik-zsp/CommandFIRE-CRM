@@ -108,6 +108,65 @@ CREATE TABLE IF NOT EXISTS tickets (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS tickets_site_idx ON tickets(site_id);
+
+-- Control panel record ("karta centrali"); a site may have several networked panels.
+CREATE TABLE IF NOT EXISTS panels (
+  id SERIAL PRIMARY KEY,
+  site_id INT NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+  name TEXT NOT NULL DEFAULT 'Centrala główna',
+  manufacturer TEXT,
+  model TEXT,
+  serial TEXT,
+  firmware TEXT,
+  software_tool TEXT,
+  installed_at DATE,
+  installer TEXT,
+  location TEXT,
+  network_address TEXT,
+  loops INT,
+  zones INT,
+  power_supply TEXT,
+  batteries TEXT,
+  transmission TEXT,
+  service_access TEXT,
+  notes TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS panels_site_idx ON panels(site_id);
+
+-- Configuration file versions; the bytes live in private object storage.
+CREATE TABLE IF NOT EXISTS panel_files (
+  id SERIAL PRIMARY KEY,
+  panel_id INT NOT NULL REFERENCES panels(id) ON DELETE CASCADE,
+  filename TEXT NOT NULL,
+  mime TEXT,
+  size INT NOT NULL,
+  sha256 TEXT,
+  s3_key TEXT NOT NULL,
+  version TEXT,
+  description TEXT,
+  uploaded_by INT REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS panel_files_panel_idx ON panel_files(panel_id);
+
+-- Change log for devices, tickets and panels. entity_id has no FK so entries survive deletion.
+CREATE TABLE IF NOT EXISTS history (
+  id SERIAL PRIMARY KEY,
+  site_id INT NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+  entity TEXT NOT NULL,
+  entity_id INT NOT NULL,
+  entity_label TEXT,
+  kind TEXT NOT NULL,
+  summary TEXT,
+  changes JSONB NOT NULL DEFAULT '[]'::jsonb,
+  comment TEXT,
+  event_date DATE NOT NULL DEFAULT current_date,
+  user_id INT REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS history_entity_idx ON history(entity, entity_id);
+CREATE INDEX IF NOT EXISTS history_site_idx ON history(site_id);
 `;
 
 // Default checklist for a periodic SSP inspection.

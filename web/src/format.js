@@ -58,3 +58,22 @@ export const TONES = {
   sprawne: 'ok', 'do obserwacji': 'warn', uszkodzone: 'danger', wycofane: 'muted',
   admin: 'danger', technik: 'info',
 };
+
+// ---- history ----
+export const DEVICE_EVENT_KINDS = [
+  { value: 'test', label: 'Test / pomiar' },
+  { value: 'konserwacja', label: 'Konserwacja' },
+  { value: 'usterka', label: 'Usterka (oznacz jako uszkodzone)' },
+  { value: 'naprawa', label: 'Naprawa (oznacz jako sprawne)' },
+  { value: 'wymiana', label: 'Wymiana elementu' },
+  { value: 'notatka', label: 'Notatka' },
+];
+export const PANEL_EVENT_KINDS = ['serwis', 'zmiana konfiguracji', 'aktualizacja oprogramowania', 'usterka', 'naprawa', 'notatka'];
+export const AUTO_KINDS = ['utworzenie', 'zmiana', 'status', 'usunięcie', 'plik'];
+
+export function fmtSize(b) {
+  if (b == null) return '—';
+  if (b < 1024) return `${b} B`;
+  if (b < 1024 * 1024) return `${(b / 1024).toFixed(1).replace('.', ',')} KB`;
+  return `${(b / 1024 / 1024).toFixed(2).replace('.', ',')} MB`;
+}

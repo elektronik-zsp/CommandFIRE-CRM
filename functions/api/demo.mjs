@@ -22,23 +22,30 @@ const CLIENTS = [
 
 const DEVICES = [
   { type: 'Centrala', manufacturer: null, model: null, loop_no: null, location: 'Pomieszczenie ochrony, parter', quantity: 1, installed: -2200 },
-  { type: 'Akumulator', manufacturer: 'Yuasa', model: 'NP17-12 (12V 17Ah)', location: 'Obudowa centrali', quantity: 2, installed: -1500, replace_by: 45 },
+  { type: 'Akumulator', manufacturer: 'Yuasa', model: 'NP17-12 (12V 17Ah)', location: 'Obudowa centrali', quantity: 2, installed: -1500, replace_by: 45,
+    events: [
+      { kind: 'test', summary: 'Test pojemności akumulatorów', comment: 'Napięcie 13,4 V, prąd ładowania w normie.', days: -380 },
+      { kind: 'test', summary: 'Test pojemności akumulatorów', comment: 'Spadek pojemności do ok. 70% — zalecana wymiana w ciągu 3 miesięcy.', days: -95 },
+    ] },
   { type: 'Czujka dymu optyczna', manufacturer: 'Polon-Alfa', model: 'DOR-6046', loop_no: 1, location: 'Korytarz parter', quantity: 24, installed: -2200 },
   { type: 'Czujka ciepła', manufacturer: 'Polon-Alfa', model: 'TOR-6046', loop_no: 1, location: 'Kuchnia, zaplecze', quantity: 4, installed: -2200 },
   { type: 'Czujka wielosensorowa', manufacturer: 'Polon-Alfa', model: 'DUR-6046', loop_no: 2, location: 'Strefa sklepów, piętro 1', quantity: 32, installed: -2200 },
-  { type: 'ROP', manufacturer: 'Polon-Alfa', model: 'ROP-63', loop_no: 2, location: 'Wyjścia ewakuacyjne', quantity: 12, installed: -2200 },
+  { type: 'ROP', manufacturer: 'Polon-Alfa', model: 'ROP-63', loop_no: 2, location: 'Wyjścia ewakuacyjne', quantity: 12, installed: -2200,
+    events: [{ kind: 'naprawa', summary: 'Wymiana zbitej szybki ROP przy wyjściu E3', comment: 'Element sprawdzony, alarm testowy przekazany poprawnie.', days: -210 }] },
   { type: 'Sygnalizator akustyczno-optyczny', manufacturer: 'W2', model: 'SAOZ-Pk1', loop_no: 3, location: 'Klatki schodowe', quantity: 8, installed: -2200 },
   { type: 'Moduł wejść/wyjść', manufacturer: 'Polon-Alfa', model: 'EKS-6203', loop_no: 3, location: 'Rozdzielnia, centrala wentylacyjna', quantity: 3, installed: -2200 },
   { type: 'Zasilacz', manufacturer: 'Merawex', model: 'ZSP135-DR-7A', location: 'Szacht techniczny 1p', quantity: 1, installed: -1800, replace_by: 600 },
 ];
 
 const TICKETS = [
-  { title: 'Uszkodzenie pętli nr 2 — przerwa linii', category: 'awaria', priority: 'krytyczny', status: 'w realizacji', days: -1, reported_by: 'Ochrona obiektu' },
+  { title: 'Uszkodzenie pętli nr 2 — przerwa linii', category: 'awaria', priority: 'krytyczny', status: 'w realizacji', days: -1, reported_by: 'Ochrona obiektu', comment: 'Zlokalizowano przerwę między adresami 14 a 15 — potrzebny dostęp do sufitu podwieszanego.' },
   { title: 'Alarm fałszywy — czujka w kuchni (zapylenie)', category: 'alarm fałszywy', priority: 'wysoki', status: 'nowe', days: -2, reported_by: 'Kierownik zmiany' },
   { title: 'Wymiana akumulatorów w centrali', category: 'konserwacja', priority: 'normalny', status: 'nowe', days: -5, reported_by: 'Przegląd okresowy' },
   { title: 'Rozbudowa o 6 czujek — nowy najemca lokal 1.14', category: 'modernizacja', priority: 'niski', status: 'nowe', days: -9, reported_by: 'Zarządca' },
   { title: 'Brak transmisji do PSP po burzy', category: 'awaria', priority: 'krytyczny', status: 'zakończone', days: -30, reported_by: 'Stacja monitoringu', resolution: 'Wymieniono uszkodzony moduł transmisji, wykonano test połączenia z PSP.' },
 ];
+
+const PANEL_TOOLS = { 'Polon-Alfa': 'POLON-SERWIS 6000', 'Schrack Seconet': 'Integral Toolset', Bosch: 'FSP-5000-RPS', 'Esser (Honeywell)': 'tools 8000' };
 
 const addDays = (d) => { const t = new Date(); t.setDate(t.getDate() + d); return t.toISOString().slice(0, 10); };
 
@@ -55,11 +62,24 @@ export async function seedDemo({ q, one, user, checklist }) {
           s.monitoring, s.monitoring_operator || null, s.contract_number || null, s.contract_end != null ? addDays(s.contract_end) : null,
           s.inspection_interval_months, s.last != null ? addDays(s.last) : null]);
       for (const d of DEVICES) {
-        await q(`INSERT INTO devices (site_id, type, manufacturer, model, loop_no, location, quantity, installed_at, replace_by)
-          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+        const dev = await one(`INSERT INTO devices (site_id, type, manufacturer, model, loop_no, location, quantity, installed_at, replace_by)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
           [site.id, d.type, d.manufacturer || s.panel_manufacturer, d.model || s.panel_model, d.loop_no ?? null, d.location,
             d.quantity, addDays(d.installed), d.replace_by != null ? addDays(d.replace_by) : null]);
+        for (const e of d.events || []) {
+          await q(`INSERT INTO history (site_id, entity, entity_id, entity_label, kind, summary, comment, event_date, user_id)
+            VALUES ($1,'device',$2,$3,$4,$5,$6,$7,$8)`, [site.id, dev.id, `${d.type} — ${d.location}`, e.kind, e.summary, e.comment, addDays(e.days), user.id]);
+        }
       }
+      const panel = await one(`INSERT INTO panels (site_id, name, manufacturer, model, serial, firmware, software_tool, installed_at, installer,
+          location, network_address, loops, zones, power_supply, batteries, transmission)
+        VALUES ($1,'Centrala główna',$2,$3,$4,$5,$6,$7,'Instal-Pożar Sp. z o.o.','Pomieszczenie ochrony, parter',$8,$9,$10,'Wbudowany 27,6 V / 5 A','2 × 12 V 17 Ah',$11) RETURNING id`,
+        [site.id, s.panel_manufacturer, s.panel_model, `${(s.panel_model || 'CP').replace(/\W/g, '').slice(0, 4).toUpperCase()}-${20190 + site.id * 37}`,
+          `v${3 + (site.id % 3)}.${site.id % 10}.${12 + site.id}`, PANEL_TOOLS[s.panel_manufacturer] || null, addDays(-2200),
+          s.monitoring ? `192.168.10.${20 + site.id}` : null, s.loops, s.loops * 6, s.monitoring ? `UTA → ${s.monitoring_operator}` : 'brak transmisji']);
+      await q(`INSERT INTO history (site_id, entity, entity_id, entity_label, kind, summary, comment, event_date, user_id)
+        VALUES ($1,'panel',$2,'Centrala główna','aktualizacja oprogramowania','Aktualizacja firmware centrali','Aktualizacja zalecana przez producenta, konfiguracja przeniesiona bez zmian.',$3,$4)`,
+        [site.id, panel.id, addDays(-400), user.id]);
       if (s.last != null) {
         await q(`INSERT INTO inspections (site_id, scheduled_date, performed_date, technician_id, status, result, protocol_number, checklist, findings)
           VALUES ($1,$2,$2,$3,'wykonany',$4,$5,$6,$7)`,
@@ -72,10 +92,15 @@ export async function seedDemo({ q, one, user, checklist }) {
           [site.id, addDays(plan), user.id, JSON.stringify(checklist)]);
       }
       const t = TICKETS[ti++ % TICKETS.length];
-      await q(`INSERT INTO tickets (site_id, title, category, priority, status, assigned_to, reported_by, reported_at, resolution, resolved_at)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+      const ticket = await one(`INSERT INTO tickets (site_id, title, category, priority, status, assigned_to, reported_by, reported_at, resolution, resolved_at)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
         [site.id, t.title, t.category, t.priority, t.status, user.id, t.reported_by, addDays(t.days), t.resolution || null,
           t.status === 'zakończone' ? addDays(t.days + 1) : null]);
+      const tlog = (kind, summary, comment, days) => q(`INSERT INTO history (site_id, entity, entity_id, entity_label, kind, summary, comment, event_date, user_id, created_at)
+        VALUES ($1,'ticket',$2,$3,$4,$5,$6,$7,$8,$9)`, [site.id, ticket.id, `#${ticket.id} ${t.title}`, kind, summary, comment, addDays(days), user.id, addDays(days) + 'T09:00:00Z']);
+      await tlog('utworzenie', 'Zarejestrowano zgłoszenie', null, t.days);
+      if (t.status !== 'nowe') await tlog('status', `Status: nowe → ${t.status}`, null, Math.min(t.days + 1, 0));
+      if (t.comment) await tlog('komentarz', null, t.comment, Math.min(t.days + 1, 0));
     }
   }
 }

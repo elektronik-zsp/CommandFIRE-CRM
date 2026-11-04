@@ -1,20 +1,45 @@
+import { useState } from 'react';
 import { api } from '../api';
 import { useAuth } from '../auth';
-import { useApi, FormModal, Spinner, Modal } from '../ui';
+import { useApi, Modal, RecordForm, Spinner, Tabs } from '../ui';
 import { ticketFields, clean, toForm } from '../forms';
+import { HistoryList, AddEntry } from './History';
 
 // Create / edit a service ticket. `ticket` = existing row or defaults for a new one.
-export default function TicketModal({ ticket = {}, onClose, onSaved }) {
+export default function TicketModal({ ticket = {}, onClose, onSaved, initialTab = 'dane' }) {
   const { user } = useAuth();
+  const [tab, setTab] = useState(initialTab);
   const sites = useApi('sites.list', {});
   const users = useApi('users.list', {});
-  if (!sites.data || !users.data) return <Modal title="Zgłoszenie" onClose={onClose}><Spinner /></Modal>;
+  const history = useApi('history.list', { entity: 'ticket', entity_id: ticket.id || 0 });
+  const title = ticket.id ? `Zgłoszenie #${ticket.id}` : 'Nowe zgłoszenie serwisowe';
+  if (!sites.data || !users.data) return <Modal title={title} onClose={onClose}><Spinner /></Modal>;
 
-  const initial = toForm({ category: 'awaria', priority: 'normalny', status: 'nowe', ...ticket });
-  return (
-    <FormModal wide title={ticket.id ? `Zgłoszenie #${ticket.id}` : 'Nowe zgłoszenie serwisowe'}
-      fields={ticketFields(sites.data, users.data)} initial={initial} onClose={onClose}
+  const form = (
+    <RecordForm fields={ticketFields(sites.data, users.data)} initial={toForm({ category: 'awaria', priority: 'normalny', status: 'nowe', ...ticket })}
+      onClose={onClose}
       onSubmit={async (v) => { await api('tickets.save', clean(v)); onSaved?.(); }}
       onDelete={ticket.id && user.role === 'admin' ? async () => { await api('tickets.delete', { id: ticket.id }); onSaved?.(); } : undefined} />
+  );
+
+  return (
+    <Modal wide title={title} onClose={onClose}>
+      {!ticket.id ? form : (
+        <>
+          <Tabs value={tab} onChange={setTab} tabs={[
+            { key: 'dane', label: 'Szczegóły' },
+            { key: 'historia', label: 'Historia i komentarze', count: history.data?.length },
+          ]} />
+          {tab === 'dane' && form}
+          {tab === 'historia' && (
+            <div className="flex flex-col gap-4">
+              <AddEntry kinds={['komentarz']} withDate={false} placeholder="Dodaj komentarz — ustalenia z klientem, postęp prac…" submitLabel="Dodaj komentarz"
+                onSubmit={async (v) => { await api('history.add', { entity: 'ticket', entity_id: ticket.id, kind: 'komentarz', comment: v.comment }); history.reload(); }} />
+              {history.data ? <HistoryList rows={history.data} onChanged={history.reload} /> : <Spinner />}
+            </div>
+          )}
+        </>
+      )}
+    </Modal>
   );
 }

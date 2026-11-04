@@ -6,6 +6,8 @@
  */
 import pg from 'pg';
 import crypto from 'node:crypto';
+import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { SCHEMA, DEFAULT_CHECKLIST } from './schema.mjs';
 import { seedDemo } from './demo.mjs';
 
@@ -64,6 +66,81 @@ async function save(table, columns, data) {
   }
   const ph = cols.map((_, i) => `$${i + 1}`).join(', ');
   return one(`INSERT INTO ${table} (${cols.join(', ')}) VALUES (${ph}) RETURNING *`, vals);
+}
+
+// ---------- history (change log) ----------
+
+const FIELD_LABELS = {
+  type: 'Typ', manufacturer: 'Producent', model: 'Model', serial: 'Nr seryjny', loop_no: 'Pętla', address_no: 'Adres',
+  location: 'Lokalizacja', quantity: 'Ilość', installed_at: 'Data montażu', replace_by: 'Wymiana do', status: 'Status',
+  notes: 'Uwagi', title: 'Tytuł', description: 'Opis', category: 'Kategoria', priority: 'Priorytet', assigned_to: 'Technik',
+  reported_by: 'Zgłaszający', due_date: 'Termin realizacji', resolution: 'Wykonane prace', name: 'Nazwa', firmware: 'Firmware',
+  software_tool: 'Oprogramowanie serwisowe', installer: 'Instalator', network_address: 'Adres sieciowy', loops: 'Pętle',
+  zones: 'Strefy', power_supply: 'Zasilacz', batteries: 'Akumulatory', transmission: 'Transmisja / UTA', service_access: 'Dostęp serwisowy',
+};
+const ENTITY_LABEL = {
+  device: (r) => `${r.type}${r.loop_no != null ? ` L${r.loop_no}${r.address_no != null ? '/' + r.address_no : ''}` : ''}${r.location ? ' — ' + r.location : ''}`,
+  ticket: (r) => `#${r.id} ${r.title}`,
+  panel: (r) => [r.name, r.model].filter(Boolean).join(' — '),
+};
+const CREATED = { device: 'Dodano element do ewidencji', ticket: 'Zarejestrowano zgłoszenie', panel: 'Utworzono kartę centrali' };
+const HISTORY_SELECT = 'SELECT h.*, u.name AS user_name FROM history h LEFT JOIN users u ON u.id=h.user_id';
+
+const norm = (v) => (v === '' || v === undefined ? null : v instanceof Date ? v.toISOString() : v);
+function diff(before, after, cols) {
+  return cols.filter((c) => String(norm(before?.[c]) ?? '') !== String(norm(after?.[c]) ?? ''))
+    .map((c) => ({ field: c, label: FIELD_LABELS[c] || c, from: norm(before?.[c]), to: norm(after?.[c]) }));
+}
+// Show technician names instead of ids
+async function withNames(changes) {
+  const ids = changes.filter((c) => c.field === 'assigned_to').flatMap((c) => [c.from, c.to]).filter(Boolean);
+  if (!ids.length) return changes;
+  const names = Object.fromEntries((await q('SELECT id, name FROM users WHERE id = ANY($1)', [ids])).map((u) => [u.id, u.name]));
+  return changes.map((c) => (c.field === 'assigned_to' ? { ...c, from: names[c.from] ?? null, to: names[c.to] ?? null } : c));
+}
+function logEvent({ site_id, entity, entity_id, entity_label, kind, summary, changes = [], comment, event_date, user }) {
+  return one(`INSERT INTO history (site_id, entity, entity_id, entity_label, kind, summary, changes, comment, event_date, user_id)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,COALESCE($9::date, current_date),$10) RETURNING *`,
+  [site_id, entity, entity_id, entity_label, kind, summary || null, JSON.stringify(changes), comment || null, event_date || null, user?.id || null]);
+}
+// Record a create/update of a row; no entry when nothing changed.
+async function logChange(entity, before, row, cols, user) {
+  const changes = before ? await withNames(diff(before, row, cols)) : [];
+  if (before && !changes.length) return;
+  const status = changes.find((c) => c.field === 'status');
+  await logEvent({
+    site_id: row.site_id, entity, entity_id: row.id, entity_label: ENTITY_LABEL[entity](row), user, changes,
+    kind: !before ? 'utworzenie' : status ? 'status' : 'zmiana',
+    summary: !before ? CREATED[entity] : status ? `Status: ${status.from ?? '—'} → ${status.to ?? '—'}` : null,
+  });
+}
+
+// Manual entries per entity; `effect` patches the device row.
+const DEVICE_EVENTS = {
+  test: { summary: 'Test / pomiar' },
+  konserwacja: { summary: 'Konserwacja' },
+  usterka: { summary: 'Stwierdzono usterkę', effect: { status: 'uszkodzone' } },
+  naprawa: { summary: 'Naprawa', effect: { status: 'sprawne' } },
+  wymiana: { summary: 'Wymiana elementu', effect: { status: 'sprawne' } },
+  notatka: { summary: null },
+};
+const MANUAL_KINDS = {
+  ticket: ['komentarz'],
+  panel: ['notatka', 'serwis', 'aktualizacja oprogramowania', 'zmiana konfiguracji', 'usterka', 'naprawa'],
+};
+const AUTO_KINDS = ['utworzenie', 'zmiana', 'status', 'usunięcie', 'plik'];
+const ENTITY_TABLE = { device: 'devices', ticket: 'tickets', panel: 'panels' };
+
+// ---------- file storage (private prefix, presigned downloads) ----------
+
+const s3 = new S3Client({ region: process.env.AWS_REGION || 'eu-central-1' });
+const BUCKET = process.env.STORAGE_BUCKET;
+const MAX_FILE = 4 * 1024 * 1024; // function URL payload limit is 6 MB incl. base64 overhead
+
+async function purgeFiles(where, params) {
+  const rows = await q(`SELECT f.s3_key FROM panel_files f JOIN panels p ON p.id=f.panel_id JOIN sites s ON s.id=p.site_id WHERE ${where}`, params);
+  await Promise.all(rows.map((r) => s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: r.s3_key }))
+    .catch((e) => console.error('[s3] delete failed', r.s3_key, e.message))));
 }
 
 // ---------- auth ----------
@@ -156,6 +233,12 @@ const INSPECTION_COLS = ['site_id', 'type', 'scheduled_date', 'performed_date', 
   'protocol_number', 'checklist', 'findings', 'recommendations'];
 const TICKET_COLS = ['site_id', 'title', 'description', 'category', 'priority', 'status', 'assigned_to',
   'reported_by', 'due_date', 'resolution'];
+const PANEL_COLS = ['site_id', 'name', 'manufacturer', 'model', 'serial', 'firmware', 'software_tool', 'installed_at', 'installer',
+  'location', 'network_address', 'loops', 'zones', 'power_supply', 'batteries', 'transmission', 'service_access', 'notes'];
+const PANEL_SELECT = `SELECT p.*, (SELECT count(*)::int FROM panel_files f WHERE f.panel_id=p.id) AS file_count,
+    (SELECT max(f.created_at) FROM panel_files f WHERE f.panel_id=p.id) AS last_file_at
+  FROM panels p`;
+const without = (cols, ...skip) => cols.filter((c) => !skip.includes(c));
 
 // ---------- actions ----------
 
@@ -244,6 +327,7 @@ const actions = {
   },
   async 'clients.delete'({ id }, user) {
     requireAdmin(user);
+    await purgeFiles('s.client_id=$1', [id]);
     await q('DELETE FROM clients WHERE id=$1', [id]);
     return { ok: true };
   },
@@ -261,7 +345,10 @@ const actions = {
     const devices = await q('SELECT * FROM devices WHERE site_id=$1 ORDER BY loop_no NULLS FIRST, address_no NULLS FIRST, type, id', [id]);
     const inspections = await q(`${INSPECTION_SELECT} WHERE i.site_id=$1 ORDER BY COALESCE(i.performed_date, i.scheduled_date) DESC`, [id]);
     const tickets = await q(`${TICKET_SELECT} WHERE t.site_id=$1 ORDER BY t.reported_at DESC`, [id]);
-    return { site, devices, inspections, tickets };
+    const panels = await q(`${PANEL_SELECT} WHERE p.site_id=$1 ORDER BY p.id`, [id]);
+    const history = await q(`${HISTORY_SELECT} WHERE h.site_id=$1 AND h.entity IN ('device','panel')
+      ORDER BY h.event_date DESC, h.id DESC LIMIT 300`, [id]);
+    return { site, devices, inspections, tickets, panels, history };
   },
   async 'sites.save'(p) {
     if (!p.name?.trim() || !p.client_id) throw new HttpError(400, 'Nazwa obiektu i klient są wymagane');
@@ -269,17 +356,125 @@ const actions = {
   },
   async 'sites.delete'({ id }, user) {
     requireAdmin(user);
+    await purgeFiles('s.id=$1', [id]);
     await q('DELETE FROM sites WHERE id=$1', [id]);
     return { ok: true };
   },
 
   // --- devices ---
-  async 'devices.save'(p) {
+  async 'devices.save'(p, user) {
     if (!p.type || !p.site_id) throw new HttpError(400, 'Typ urządzenia jest wymagany');
-    return save('devices', DEVICE_COLS, p);
+    const before = p.id ? await one('SELECT * FROM devices WHERE id=$1', [p.id]) : null;
+    const row = await save('devices', DEVICE_COLS, p);
+    await logChange('device', before, row, without(DEVICE_COLS, 'site_id'), user);
+    return row;
   },
-  async 'devices.delete'({ id }) {
-    await q('DELETE FROM devices WHERE id=$1', [id]);
+  async 'devices.delete'({ id }, user) {
+    const row = await one('DELETE FROM devices WHERE id=$1 RETURNING *', [id]);
+    if (row) await logEvent({ site_id: row.site_id, entity: 'device', entity_id: row.id, entity_label: ENTITY_LABEL.device(row), kind: 'usunięcie', summary: 'Usunięto element z ewidencji', user });
+    return { ok: true };
+  },
+  // Service entry for a device (test, repair, replacement…); may update the device itself.
+  async 'devices.event'({ device_id, kind, event_date, comment, replace_by, serial }, user) {
+    const def = DEVICE_EVENTS[kind];
+    if (!def) throw new HttpError(400, 'Nieznany rodzaj wpisu');
+    if (kind === 'notatka' && !comment?.trim()) throw new HttpError(400, 'Wpisz treść notatki');
+    const before = await one('SELECT * FROM devices WHERE id=$1', [device_id]);
+    if (!before) throw new HttpError(404, 'Nie znaleziono elementu');
+    const patch = { ...def.effect };
+    if (kind === 'wymiana') {
+      patch.installed_at = event_date || new Date().toISOString().slice(0, 10);
+      if (replace_by !== undefined) patch.replace_by = replace_by;
+      if (serial) patch.serial = serial;
+    }
+    const row = Object.keys(patch).length ? await save('devices', DEVICE_COLS, { id: before.id, ...patch }) : before;
+    const entry = await logEvent({ site_id: row.site_id, entity: 'device', entity_id: row.id, entity_label: ENTITY_LABEL.device(row),
+      kind, summary: def.summary, changes: diff(before, row, Object.keys(patch)), comment, event_date, user });
+    return { device: row, entry };
+  },
+
+  // --- history ---
+  async 'history.list'({ entity, entity_id }) {
+    if (!ENTITY_TABLE[entity]) throw new HttpError(400, 'Nieznany typ rekordu');
+    return q(`${HISTORY_SELECT} WHERE h.entity=$1 AND h.entity_id=$2 ORDER BY h.event_date DESC, h.id DESC`, [entity, entity_id]);
+  },
+  async 'history.add'({ entity, entity_id, kind, comment, event_date }, user) {
+    if (!MANUAL_KINDS[entity]?.includes(kind)) throw new HttpError(400, 'Nieznany rodzaj wpisu');
+    if (!comment?.trim()) throw new HttpError(400, 'Wpisz treść');
+    const row = await one(`SELECT * FROM ${ENTITY_TABLE[entity]} WHERE id=$1`, [entity_id]);
+    if (!row) throw new HttpError(404, 'Nie znaleziono rekordu');
+    return logEvent({ site_id: row.site_id, entity, entity_id: row.id, entity_label: ENTITY_LABEL[entity](row), kind, comment: comment.trim(), event_date, user });
+  },
+  async 'history.delete'({ id }, user) {
+    const h = await one('SELECT * FROM history WHERE id=$1', [id]);
+    if (!h) return { ok: true };
+    // only hand-written entries, by their author or an admin; automatic entries are the audit trail
+    if (AUTO_KINDS.includes(h.kind)) throw new HttpError(400, 'Wpisów automatycznych nie można usuwać');
+    if (h.user_id !== user.id && user.role !== 'admin') throw new HttpError(403, 'Możesz usuwać tylko własne wpisy');
+    await q('DELETE FROM history WHERE id=$1', [id]);
+    return { ok: true };
+  },
+
+  // --- panels (control panel cards) ---
+  async 'panels.get'({ id }) {
+    const panel = await one(`${PANEL_SELECT} WHERE p.id=$1`, [id]);
+    if (!panel) throw new HttpError(404, 'Nie znaleziono centrali');
+    const site = await one(`${SITE_SELECT} WHERE s.id=$1`, [panel.site_id]);
+    const files = await q(`SELECT f.id, f.filename, f.mime, f.size, f.sha256, f.version, f.description, f.created_at, f.uploaded_by, u.name AS uploader_name
+      FROM panel_files f LEFT JOIN users u ON u.id=f.uploaded_by WHERE f.panel_id=$1 ORDER BY f.created_at DESC`, [id]);
+    const history = await q(`${HISTORY_SELECT} WHERE h.entity='panel' AND h.entity_id=$1 ORDER BY h.event_date DESC, h.id DESC`, [id]);
+    return { panel, site, files, history };
+  },
+  async 'panels.save'(p, user) {
+    if (!p.site_id || !p.name?.trim()) throw new HttpError(400, 'Obiekt i nazwa centrali są wymagane');
+    const before = p.id ? await one('SELECT * FROM panels WHERE id=$1', [p.id]) : null;
+    const row = await save('panels', PANEL_COLS, p);
+    await logChange('panel', before, row, without(PANEL_COLS, 'site_id'), user);
+    return row;
+  },
+  async 'panels.delete'({ id }, user) {
+    requireAdmin(user);
+    await purgeFiles('p.id=$1', [id]);
+    const row = await one('DELETE FROM panels WHERE id=$1 RETURNING *', [id]);
+    if (row) await logEvent({ site_id: row.site_id, entity: 'panel', entity_id: row.id, entity_label: ENTITY_LABEL.panel(row), kind: 'usunięcie', summary: 'Usunięto kartę centrali', user });
+    return { ok: true };
+  },
+  async 'panels.upload'({ panel_id, filename, mime, data, version, description }, user) {
+    const panel = await one('SELECT * FROM panels WHERE id=$1', [panel_id]);
+    if (!panel) throw new HttpError(404, 'Nie znaleziono centrali');
+    if (!filename || !data) throw new HttpError(400, 'Brak pliku');
+    const buf = Buffer.from(data, 'base64');
+    if (!buf.length) throw new HttpError(400, 'Plik jest pusty');
+    if (buf.length > MAX_FILE) throw new HttpError(400, 'Plik jest za duży (maks. 4 MB)');
+    const sha256 = crypto.createHash('sha256').update(buf).digest('hex');
+    const same = await one('SELECT id, version, filename, created_at FROM panel_files WHERE panel_id=$1 AND sha256=$2 ORDER BY created_at DESC LIMIT 1', [panel.id, sha256]);
+    const safe = String(filename).normalize('NFKD').replace(/[^\w.-]+/g, '_').slice(-120);
+    const key = `configs/site-${panel.site_id}/panel-${panel.id}/${Date.now()}-${safe}`;
+    await s3.send(new PutObjectCommand({ Bucket: BUCKET, Key: key, Body: buf, ContentType: mime || 'application/octet-stream' }));
+    const file = await one(`INSERT INTO panel_files (panel_id, filename, mime, size, sha256, s3_key, version, description, uploaded_by)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id, filename, size, version, created_at`,
+    [panel.id, filename, mime || null, buf.length, sha256, key, version || null, description || null, user.id]);
+    await logEvent({ site_id: panel.site_id, entity: 'panel', entity_id: panel.id, entity_label: ENTITY_LABEL.panel(panel), kind: 'plik',
+      summary: `Wgrano plik konfiguracji: ${filename}${version ? ` (wersja ${version})` : ''}`, comment: description, user });
+    return { file, same };
+  },
+  async 'panels.fileUrl'({ id }) {
+    const f = await one('SELECT * FROM panel_files WHERE id=$1', [id]);
+    if (!f) throw new HttpError(404, 'Nie znaleziono pliku');
+    const url = await getSignedUrl(s3, new GetObjectCommand({
+      Bucket: BUCKET, Key: f.s3_key,
+      ResponseContentDisposition: `attachment; filename*=UTF-8''${encodeURIComponent(f.filename)}`,
+    }), { expiresIn: 300 });
+    return { url };
+  },
+  async 'panels.deleteFile'({ id }, user) {
+    const f = await one('SELECT f.*, p.site_id, p.name, p.model FROM panel_files f JOIN panels p ON p.id=f.panel_id WHERE f.id=$1', [id]);
+    if (!f) return { ok: true };
+    if (f.uploaded_by !== user.id && user.role !== 'admin') throw new HttpError(403, 'Plik może usunąć autor lub administrator');
+    await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: f.s3_key }));
+    await q('DELETE FROM panel_files WHERE id=$1', [id]);
+    await logEvent({ site_id: f.site_id, entity: 'panel', entity_id: f.panel_id, entity_label: ENTITY_LABEL.panel(f), kind: 'plik',
+      summary: `Usunięto plik konfiguracji: ${f.filename}${f.version ? ` (wersja ${f.version})` : ''}`, user });
     return { ok: true };
   },
 
@@ -338,15 +533,19 @@ const actions = {
         t.reported_at DESC
       LIMIT 500`, [status || null, priority || null, search || null, assigned_to || null]);
   },
-  async 'tickets.save'(p) {
+  async 'tickets.save'(p, user) {
     if (!p.site_id || !p.title?.trim()) throw new HttpError(400, 'Obiekt i tytuł zgłoszenia są wymagane');
-    const row = await save('tickets', TICKET_COLS, p);
+    const before = p.id ? await one('SELECT * FROM tickets WHERE id=$1', [p.id]) : null;
+    const saved = await save('tickets', TICKET_COLS, p);
     // keep resolved_at in sync with the status
-    return one(`UPDATE tickets SET resolved_at = CASE WHEN status='zakończone' THEN COALESCE(resolved_at, now()) ELSE NULL END
-      WHERE id=$1 RETURNING *`, [row.id]);
+    const row = await one(`UPDATE tickets SET resolved_at = CASE WHEN status='zakończone' THEN COALESCE(resolved_at, now()) ELSE NULL END
+      WHERE id=$1 RETURNING *`, [saved.id]);
+    await logChange('ticket', before, row, without(TICKET_COLS, 'site_id'), user);
+    return row;
   },
-  async 'tickets.delete'({ id }) {
-    await q('DELETE FROM tickets WHERE id=$1', [id]);
+  async 'tickets.delete'({ id }, user) {
+    const row = await one('DELETE FROM tickets WHERE id=$1 RETURNING *', [id]);
+    if (row) await logEvent({ site_id: row.site_id, entity: 'ticket', entity_id: row.id, entity_label: ENTITY_LABEL.ticket(row), kind: 'usunięcie', summary: 'Usunięto zgłoszenie', user });
     return { ok: true };
   },
 
@@ -359,6 +558,7 @@ const actions = {
   },
   async 'demo.clear'(_, user) {
     requireAdmin(user);
+    await purgeFiles('s.client_id IN (SELECT id FROM clients WHERE demo)', []);
     await q('DELETE FROM clients WHERE demo');
     return { ok: true };
   },

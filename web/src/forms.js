@@ -58,6 +58,30 @@ export const deviceFields = [
   { name: 'notes', label: 'Uwagi', type: 'textarea', span: 2 },
 ];
 
+export const panelFields = [
+  { name: 'name', label: 'Nazwa', required: true, placeholder: 'np. Centrala główna / Podcentrala B' },
+  { name: 'location', label: 'Lokalizacja', placeholder: 'np. Pomieszczenie ochrony, parter' },
+  { name: 'manufacturer', label: 'Producent', list: PANEL_MANUFACTURERS },
+  { name: 'model', label: 'Model' },
+  { name: 'serial', label: 'Nr seryjny' },
+  { name: 'installed_at', label: 'Data uruchomienia', type: 'date' },
+  { name: 'installer', label: 'Instalator / uruchamiający', span: 2 },
+  { section: 'Konfiguracja' },
+  { name: 'firmware', label: 'Wersja oprogramowania (firmware)' },
+  { name: 'software_tool', label: 'Program serwisowy', placeholder: 'np. POLON-SERWIS 6000' },
+  { name: 'loops', label: 'Liczba pętli', type: 'number' },
+  { name: 'zones', label: 'Liczba stref', type: 'number' },
+  { name: 'network_address', label: 'Adres sieciowy / IP', placeholder: 'np. 192.168.10.21' },
+  { name: 'transmission', label: 'Transmisja / UTA', placeholder: 'np. UTA → KM PSP' },
+  { section: 'Zasilanie' },
+  { name: 'power_supply', label: 'Zasilacz' },
+  { name: 'batteries', label: 'Akumulatory', placeholder: 'np. 2 × 12 V 17 Ah' },
+  { section: 'Serwis' },
+  { name: 'service_access', label: 'Dostęp serwisowy', type: 'textarea', span: 2, rows: 2,
+    hint: 'Gdzie są klucze, kto wydaje kody dostępu. Nie zapisuj tu haseł.' },
+  { name: 'notes', label: 'Uwagi', type: 'textarea', span: 2 },
+];
+
 export const scheduleFields = (sites, users) => [
   { name: 'site_id', label: 'Obiekt', type: 'select', options: opts(sites, (s) => `${s.name} — ${s.client_name}`), required: true, span: 2 },
   { name: 'type', label: 'Rodzaj', type: 'select', options: INSPECTION_TYPES, required: true },
@@ -91,7 +115,7 @@ export const userFields = (isNew) => [
 // Convert numeric-ish select values back before sending
 export function clean(v) {
   const out = { ...v };
-  for (const k of ['client_id', 'site_id', 'technician_id', 'assigned_to', 'inspection_interval_months', 'loops', 'loop_no', 'address_no', 'quantity']) {
+  for (const k of ['client_id', 'site_id', 'technician_id', 'assigned_to', 'inspection_interval_months', 'loops', 'zones', 'loop_no', 'address_no', 'quantity']) {
     if (out[k] === '') out[k] = null;
     else if (out[k] != null) out[k] = Number(out[k]);
   }

@@ -1,13 +1,15 @@
 import { useState } from 'react';
 import { useNavigate, useParams, Link, useSearchParams } from 'react-router-dom';
-import { Pencil, Plus, ArrowLeft, CalendarPlus, Siren, Radio, Phone, ClipboardCheck, Wrench } from 'lucide-react';
+import { Pencil, Plus, ArrowLeft, CalendarPlus, Siren, Radio, Phone, CircuitBoard, FileCode2, ChevronRight } from 'lucide-react';
 import { api } from '../api';
 import { useAuth } from '../auth';
 import { useApi, Card, Table, PageHeader, Button, FormModal, Spinner, ErrorBox, KV, Badge, Tabs, Empty } from '../ui';
-import { siteFields, deviceFields, clean, toForm } from '../forms';
+import { siteFields, panelFields, clean, toForm } from '../forms';
 import { fmtDate, fmtDateTime, daysUntil, relDays, dueTone } from '../format';
 import TicketModal from '../components/TicketModal';
 import ScheduleModal from '../components/ScheduleModal';
+import DeviceModal from '../components/DeviceModal';
+import { HistoryList } from '../components/History';
 
 const INTERVAL = { 1: 'co miesiąc', 3: 'co kwartał', 6: 'co pół roku', 12: 'raz w roku' };
 
@@ -19,20 +21,34 @@ export default function SiteDetail() {
   const tab = params.get('tab') || 'info';
   const { data, error, reload } = useApi('sites.get', { id: Number(id) });
   const clients = useApi('clients.list', {});
-  const [modal, setModal] = useState(null); // 'edit' | 'schedule' | {device} | {ticket}
+  const [modal, setModal] = useState(null); // 'edit' | 'schedule' | 'panel' | {device} | {ticket}
 
   if (error) return <ErrorBox>{error}</ErrorBox>;
   if (!data) return <Spinner />;
-  const { site, devices, inspections, tickets } = data;
+  const { site, devices, inspections, tickets, panels, history } = data;
   const n = daysUntil(site.next_due);
   const totalElements = devices.reduce((a, d) => a + (d.quantity || 1), 0);
   const byType = Object.entries(devices.reduce((acc, d) => ({ ...acc, [d.type]: (acc[d.type] || 0) + (d.quantity || 1) }), {})).sort((a, b) => b[1] - a[1]);
 
-  // Operating log: inspections + tickets, newest first
-  const history = [
-    ...inspections.filter((i) => i.status === 'wykonany').map((i) => ({ kind: 'inspection', date: i.performed_date, row: i })),
-    ...tickets.map((t) => ({ kind: 'ticket', date: t.reported_at, row: t })),
-  ].sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  // Operating log: inspections, tickets and the element / panel change log, newest first
+  const book = [
+    ...inspections.filter((i) => i.status === 'wykonany').map((i) => ({
+      virtual: true, kind: 'przegląd', entity: 'inspection', entity_id: i.id, event_date: i.performed_date, created_at: i.performed_date + 'T12:00:00',
+      entity_label: `${i.type}${i.result ? ' — ' + i.result : ''}${i.protocol_number ? ' · ' + i.protocol_number : ''}`, comment: i.findings, user_name: i.technician_name,
+    })),
+    ...tickets.map((t) => ({
+      virtual: true, kind: 'zgłoszenie', entity: 'ticket', entity_id: t.id, event_date: t.reported_at.slice(0, 10), created_at: t.reported_at,
+      entity_label: `#${t.id} ${t.title} (${t.status})`, comment: t.resolution,
+    })),
+    ...history,
+  ].sort((a, b) => b.event_date.localeCompare(a.event_date) || String(b.created_at).localeCompare(String(a.created_at)));
+  const openEntity = (h) => {
+    if (h.entity === 'ticket') { const t = tickets.find((x) => x.id === h.entity_id); if (t) setModal({ ticket: t }); }
+    if (h.entity === 'device') { const d = devices.find((x) => x.id === h.entity_id); if (d) setModal({ device: d, tab: 'historia' }); }
+  };
+  const newPanel = () => setModal({ panel: {
+    site_id: site.id, name: panels.length ? '' : 'Centrala główna', manufacturer: site.panel_manufacturer, model: site.panel_model, loops: site.loops,
+  } });
 
   return (
     <>
@@ -51,7 +67,7 @@ export default function SiteDetail() {
         </div>
         <div className="px-4 py-3">
           <div className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-muted">Centrala</div>
-          <div className="font-display text-[22px] font-semibold mt-0.5 truncate">{[site.panel_manufacturer, site.panel_model].filter(Boolean).join(' ') || '—'}</div>
+          <button onClick={() => setParams({ tab: 'centrala' })} className="block max-w-full font-display text-[22px] font-semibold mt-0.5 truncate hover:text-signal cursor-pointer">{[site.panel_manufacturer, site.panel_model].filter(Boolean).join(' ') || '—'}</button>
         </div>
         <div className="px-4 py-3">
           <div className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-muted">Elementy</div>
@@ -65,6 +81,7 @@ export default function SiteDetail() {
 
       <Tabs value={tab} onChange={(t) => setParams({ tab: t })} tabs={[
         { key: 'info', label: 'Informacje' },
+        { key: 'centrala', label: 'Karta centrali', count: panels.length },
         { key: 'urzadzenia', label: 'Elementy systemu', count: devices.length },
         { key: 'przeglady', label: 'Przeglądy', count: inspections.length },
         { key: 'zgloszenia', label: 'Zgłoszenia', count: tickets.length },
@@ -93,6 +110,39 @@ export default function SiteDetail() {
               ['Ostatni przegląd', fmtDate(site.last_inspection)],
             ]} />
           </Card>
+        </div>
+      )}
+
+      {tab === 'centrala' && (
+        <div className="flex flex-col gap-3">
+          {panels.length === 0 ? (
+            <Card><Empty icon={CircuitBoard}>
+              <span>Ten obiekt nie ma jeszcze karty centrali.</span>
+              <Button icon={Plus} onClick={newPanel} className="mt-2">Utwórz kartę centrali</Button>
+            </Empty></Card>
+          ) : (
+            <>
+              {panels.map((p) => (
+                <Link key={p.id} to={`/centrale/${p.id}`} className="reveal group grid sm:grid-cols-[auto_1fr_auto] items-center gap-4 bg-white border border-line rounded-[3px] px-4 py-3.5 hover:border-ink transition-colors">
+                  <span className="w-11 h-11 flex items-center justify-center bg-ink text-white rounded-[3px]"><CircuitBoard size={20} /></span>
+                  <div className="min-w-0">
+                    <div className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-muted">{p.name}{p.location ? ` · ${p.location}` : ''}</div>
+                    <div className="font-display text-[22px] font-semibold leading-tight">{[p.manufacturer, p.model].filter(Boolean).join(' ') || '—'}</div>
+                    <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-[12.5px] text-ink-3 font-mono">
+                      <span>SN {p.serial || '—'}</span><span>FW {p.firmware || '—'}</span><span>{p.loops ?? '—'} pętli / {p.zones ?? '—'} stref</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className={`inline-flex items-center gap-1.5 text-[12.5px] ${p.file_count ? 'text-ink' : 'text-signal'}`}>
+                      <FileCode2 size={15} />{p.file_count ? `${p.file_count} pl. konfiguracji · ${fmtDate(p.last_file_at)}` : 'brak pliku konfiguracji'}
+                    </span>
+                    <ChevronRight size={18} className="text-muted group-hover:text-signal" />
+                  </div>
+                </Link>
+              ))}
+              <div><Button variant="ghost" icon={Plus} onClick={newPanel}>Dodaj kolejną centralę</Button></div>
+            </>
+          )}
         </div>
       )}
 
@@ -139,29 +189,7 @@ export default function SiteDetail() {
 
       {tab === 'historia' && (
         <Card title="Książka eksploatacji — chronologia zdarzeń">
-          {history.length === 0 ? <Empty>Brak wpisów</Empty> : (
-            <ol className="relative border-l-2 border-line ml-2">
-              {history.map((h) => (
-                <li key={h.kind + h.row.id} className="ml-5 pb-5 last:pb-0 relative">
-                  <span className={`absolute -left-[29px] top-0.5 w-[18px] h-[18px] rounded-full flex items-center justify-center text-white ${h.kind === 'inspection' ? 'bg-ink' : 'bg-signal'}`}>
-                    {h.kind === 'inspection' ? <ClipboardCheck size={10} /> : <Wrench size={10} />}
-                  </span>
-                  <div className="font-mono text-[11.5px] text-muted">{h.kind === 'inspection' ? fmtDate(h.date) : fmtDateTime(h.date)}</div>
-                  {h.kind === 'inspection' ? (
-                    <Link to={`/przeglady/${h.row.id}`} className="block hover:text-signal">
-                      <span className="font-medium capitalize">{h.row.type}</span> {h.row.result && <Badge>{h.row.result}</Badge>}
-                      <div className="text-[12.5px] text-muted">{h.row.technician_name}{h.row.protocol_number ? ` · protokół ${h.row.protocol_number}` : ''}{h.row.findings ? ` — ${h.row.findings}` : ''}</div>
-                    </Link>
-                  ) : (
-                    <button onClick={() => setModal({ ticket: h.row })} className="block text-left hover:text-signal cursor-pointer">
-                      <span className="font-medium">{h.row.title}</span> <Badge>{h.row.status}</Badge>
-                      {h.row.resolution && <div className="text-[12.5px] text-muted">{h.row.resolution}</div>}
-                    </button>
-                  )}
-                </li>
-              ))}
-            </ol>
-          )}
+          <HistoryList rows={book} showEntity onEntity={openEntity} onChanged={reload} empty="Brak wpisów" />
         </Card>
       )}
 
@@ -171,10 +199,10 @@ export default function SiteDetail() {
           onDelete={user.role === 'admin' ? async () => { await api('sites.delete', { id: site.id }); nav(`/klienci/${site.client_id}`); } : undefined} />
       )}
       {modal === 'schedule' && <ScheduleModal initial={{ site_id: site.id, scheduled_date: site.next_due || '' }} onClose={() => setModal(null)} onSaved={reload} />}
-      {modal?.device && (
-        <FormModal title={modal.device.id ? 'Edycja elementu' : 'Nowy element systemu'} fields={deviceFields} initial={modal.device} onClose={() => setModal(null)}
-          onSubmit={async (v) => { await api('devices.save', clean(v)); reload(); }}
-          onDelete={modal.device.id ? async () => { await api('devices.delete', { id: modal.device.id }); reload(); } : undefined} />
+      {modal?.device && <DeviceModal device={modal.device} initialTab={modal.tab} onClose={() => setModal(null)} onSaved={reload} />}
+      {modal?.panel && (
+        <FormModal wide title="Nowa karta centrali" fields={panelFields} initial={modal.panel} onClose={() => setModal(null)}
+          onSubmit={async (v) => { const p = await api('panels.save', clean(v)); nav(`/centrale/${p.id}`); }} />
       )}
       {modal?.ticket && <TicketModal ticket={modal.ticket} onClose={() => setModal(null)} onSaved={reload} />}
     </>
