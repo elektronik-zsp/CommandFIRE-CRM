@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import {
   Plus, Pencil, ArrowRightLeft, MessageSquare, StickyNote, Gauge, Wrench, AlertTriangle, Hammer, RefreshCw,
-  FileCode2, Trash2, Settings2, Cpu, Send, ClipboardCheck, Siren, Camera, X, ChevronLeft, ChevronRight, Loader2, ExternalLink,
+  FileCode2, Trash2, Settings2, Cpu, Send, ClipboardCheck, Siren, Camera, X, ChevronLeft, ChevronRight, Loader2, ExternalLink, FileCheck2,
 } from 'lucide-react';
 import { api } from '../api';
 import { useAuth } from '../auth';
@@ -25,6 +25,7 @@ const KIND = {
   naprawa: { icon: Hammer, label: 'Naprawa', color: 'bg-ok' },
   wymiana: { icon: RefreshCw, label: 'Wymiana', color: 'bg-ok' },
   plik: { icon: FileCode2, label: 'Plik konfiguracji', color: 'bg-amber' },
+  'protokół': { icon: FileCheck2, label: 'Protokół serwisowy', color: 'bg-ok' },
   'zmiana konfiguracji': { icon: Settings2, label: 'Zmiana konfiguracji', color: 'bg-amber' },
   'aktualizacja oprogramowania': { icon: Cpu, label: 'Aktualizacja oprogramowania', color: 'bg-amber' },
   // virtual rows built from inspections / tickets in the site's operating log

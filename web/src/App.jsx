@@ -15,6 +15,8 @@ import InspectionDetail from './pages/InspectionDetail';
 import Tickets from './pages/Tickets';
 import Users from './pages/Users';
 import PanelDetail from './pages/PanelDetail';
+import ServiceProtocol from './pages/ServiceProtocol';
+import Settings from './pages/Settings';
 
 export default function App() {
   const [user, setUser] = useState(null);
@@ -45,6 +47,8 @@ export default function App() {
           <Route path="przeglady" element={<Guard perm="inspections.view"><Inspections /></Guard>} />
           <Route path="przeglady/:id" element={<Guard perm="inspections.view"><InspectionDetail /></Guard>} />
           <Route path="zgloszenia" element={<Guard perm="tickets.view"><Tickets /></Guard>} />
+          <Route path="zgloszenia/:id/protokol" element={<Guard perm="tickets.view"><ServiceProtocol /></Guard>} />
+          <Route path="ustawienia" element={<Guard perm="settings.manage"><Settings /></Guard>} />
           <Route path="uzytkownicy" element={<Users />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>

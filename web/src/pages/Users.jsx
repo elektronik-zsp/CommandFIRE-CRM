@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Plus, Pencil, Check, Lock, Ban, Save, Undo2, ShieldCheck, UserRound, ArrowRight } from 'lucide-react';
+import { Plus, Pencil, Check, Lock, Ban, Save, Undo2, ShieldCheck, UserRound, ArrowRight, Cog } from 'lucide-react';
 import { api } from '../api';
 import { useAuth } from '../auth';
 import { useApi, Card, Table, PageHeader, Button, FormModal, ErrorBox, Badge, Tabs, Spinner, Select, Empty } from '../ui';
@@ -204,9 +204,9 @@ function AuditLog() {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-[12.5px] text-muted max-w-2xl">Zmiany ról, uprawnień i kont zespołu — kto, kiedy i co zmienił. Hasła nie są zapisywane, tylko fakt ich zmiany.</p>
+        <p className="text-[12.5px] text-muted max-w-2xl">Zmiany ról, uprawnień, kont zespołu i ustawień firmy — kto, kiedy i co zmienił. Hasła nie są zapisywane, tylko fakt ich zmiany.</p>
         <Select value={target} onChange={(e) => setTarget(e.target.value)} className="w-56"
-          options={[{ value: '', label: 'Wszystkie zmiany' }, { value: 'role', label: 'Role i uprawnienia' }, { value: 'user', label: 'Konta zespołu' }]} />
+          options={[{ value: '', label: 'Wszystkie zmiany' }, { value: 'role', label: 'Role i uprawnienia' }, { value: 'user', label: 'Konta zespołu' }, { value: 'settings', label: 'Ustawienia firmy' }]} />
       </div>
       {error && <ErrorBox>{error}</ErrorBox>}
       <Card pad={false} className="reveal">
@@ -221,8 +221,8 @@ function AuditLog() {
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
                     <Badge tone={ACTION_TONE[a.action]}>{a.action}</Badge>
-                    {a.target === 'role' ? <ShieldCheck size={14} className="text-muted" /> : <UserRound size={14} className="text-muted" />}
-                    <span className="font-medium">{a.target === 'role' ? 'Rola' : 'Konto'} „{a.target_label}”</span>
+                    {a.target === 'role' ? <ShieldCheck size={14} className="text-muted" /> : a.target === 'settings' ? <Cog size={14} className="text-muted" /> : <UserRound size={14} className="text-muted" />}
+                    <span className="font-medium">{a.target === 'settings' ? `Ustawienia — ${a.target_label}` : `${a.target === 'role' ? 'Rola' : 'Konto'} „${a.target_label}”`}</span>
                   </div>
                   {a.changes.length > 0 && (
                     <ul className="mt-1.5 flex flex-col gap-1 text-[12.5px]">

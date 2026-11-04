@@ -43,6 +43,7 @@ export const PERMISSION_GROUPS = [
   ] },
   { group: 'Administracja', items: [
     { key: 'users.manage', label: 'Zarządzanie kontami zespołu (bez kont administratorów)' },
+    { key: 'settings.manage', label: 'Ustawienia: dane firmy i numeracja dokumentów' },
     { key: 'demo.manage', label: 'Wczytywanie i usuwanie danych demonstracyjnych' },
   ] },
 ];

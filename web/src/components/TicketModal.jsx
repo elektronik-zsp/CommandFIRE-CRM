@@ -1,13 +1,16 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { FileCheck2, FileText } from 'lucide-react';
 import { api } from '../api';
 import { useAuth } from '../auth';
-import { useApi, Modal, RecordForm, Spinner, Tabs } from '../ui';
+import { useApi, Modal, RecordForm, Spinner, Tabs, Button, Badge } from '../ui';
 import { ticketFields, clean, toForm } from '../forms';
 import { HistoryList, AddEntry } from './History';
 
 // Create / edit a service ticket. `ticket` = existing row or defaults for a new one.
 export default function TicketModal({ ticket = {}, onClose, onSaved, initialTab = 'dane' }) {
   const { can } = useAuth();
+  const nav = useNavigate();
   const [tab, setTab] = useState(initialTab);
   const sites = useApi('sites.list', {});
   const users = useApi('users.list', {});
@@ -26,6 +29,18 @@ export default function TicketModal({ ticket = {}, onClose, onSaved, initialTab 
     <Modal wide title={title} onClose={onClose}>
       {!ticket.id ? form : (
         <>
+          {/* service protocol: one per ticket, edited on its own page (print / PDF) */}
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-3 px-3 py-2.5 bg-paper/60 border border-line rounded-[3px]">
+            <span className="flex items-center gap-2 text-[13px]">
+              <FileText size={16} className="text-muted" />Protokół serwisowy
+              {ticket.protocol_number ? <Badge tone="ok">{ticket.protocol_number}</Badge> : ticket.protocol_id ? <Badge tone="warn">roboczy</Badge> : <span className="text-muted">— nie wystawiono</span>}
+            </span>
+            {(ticket.protocol_id || can('tickets.edit')) && (
+              <Button variant={ticket.protocol_id ? 'ghost' : 'dark'} icon={FileCheck2} onClick={() => nav(`/zgloszenia/${ticket.id}/protokol`)}>
+                {ticket.protocol_id ? 'Otwórz protokół' : 'Sporządź protokół'}
+              </Button>
+            )}
+          </div>
           <Tabs value={tab} onChange={setTab} tabs={[
             { key: 'dane', label: 'Szczegóły' },
             { key: 'historia', label: 'Historia i komentarze', count: history.data?.length },

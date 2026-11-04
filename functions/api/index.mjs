@@ -11,6 +11,7 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { SCHEMA, DEFAULT_CHECKLIST } from './schema.mjs';
 import { seedDemo } from './demo.mjs';
 import { PERMISSION_GROUPS, ALL_PERMISSIONS, DEFAULT_ROLES } from './permissions.mjs';
+import { COMPANY_FIELDS, DOC_KINDS, RESETS as RESET_LABEL, defaultNumbering, counterPeriod, formatNumber, checkNumbering } from './documents.mjs';
 
 // DATE columns as plain 'YYYY-MM-DD' strings (no timezone shifting)
 pg.types.setTypeParser(1082, (v) => v);
@@ -144,7 +145,7 @@ const MANUAL_KINDS = {
   ticket: ['komentarz'],
   panel: ['notatka', 'serwis', 'aktualizacja oprogramowania', 'zmiana konfiguracji', 'usterka', 'naprawa'],
 };
-const AUTO_KINDS = ['utworzenie', 'zmiana', 'status', 'usunięcie', 'plik'];
+const AUTO_KINDS = ['utworzenie', 'zmiana', 'status', 'usunięcie', 'plik', 'protokół'];
 const ENTITY_TABLE = { device: 'devices', ticket: 'tickets', panel: 'panels' };
 
 // ---------- file storage (private prefix, presigned downloads) ----------
@@ -363,16 +364,63 @@ const INSPECTION_SELECT = `
 
 const TICKET_SELECT = `
   SELECT t.*, s.name AS site_name, s.city AS site_city, c.name AS client_name, c.id AS client_id,
-    u.name AS assignee_name
+    u.name AS assignee_name, sp.id AS protocol_id, sp.protocol_number, sp.issued_at AS protocol_issued_at
   FROM tickets t
+  LEFT JOIN service_protocols sp ON sp.ticket_id=t.id
   JOIN sites s ON s.id=t.site_id
   JOIN clients c ON c.id=s.client_id
   LEFT JOIN users u ON u.id=t.assigned_to`;
 
+const PROTOCOL_COLS = ['performed_date', 'technician_id', 'work_done', 'parts', 'system_state', 'recommendations', 'signer_name', 'signer_position'];
+
+// ---------- settings: company data and document numbering ----------
+
+const today = () => new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Warsaw' }); // YYYY-MM-DD
+async function getSetting(key, fallback) {
+  const row = await one('SELECT value FROM app_settings WHERE key=$1', [key]);
+  return row ? { ...fallback, ...JSON.parse(row.value) } : fallback;
+}
+const putSetting = (key, value) => q(`INSERT INTO app_settings (key, value) VALUES ($1, $2)
+  ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value`, [key, JSON.stringify(value)]);
+const getCompany = () => getSetting('company', {});
+const getNumbering = async () => {
+  const saved = await getSetting('numbering', {});
+  const def = defaultNumbering();
+  return Object.fromEntries(Object.keys(DOC_KINDS).map((k) => [k, { ...def[k], ...saved[k] }]));
+};
+// tables holding each kind's numbers — a number already used (e.g. typed by hand) is skipped
+const DOC_TABLE = { inspection: 'inspections', service: 'service_protocols' };
+
+// Take the next number of a document kind for the given date (atomic per kind and period).
+async function nextNumber(kind, date) {
+  const cfg = (await getNumbering())[kind];
+  const period = counterPeriod(cfg.reset, date);
+  for (let i = 0; i < 1000; i++) {
+    const { last } = await one(`INSERT INTO doc_counters (kind, period, last) VALUES ($1, $2, 1)
+      ON CONFLICT (kind, period) DO UPDATE SET last=doc_counters.last + 1 RETURNING last`, [kind, period]);
+    const number = formatNumber(cfg, last, date);
+    if (!(await one(`SELECT 1 FROM ${DOC_TABLE[kind]} WHERE protocol_number=$1`, [number]))) return number;
+  }
+  throw new HttpError(500, 'Nie udało się nadać numeru dokumentu');
+}
+// The number the next document would get today, without taking it.
+async function peekNumbers() {
+  const numbering = await getNumbering();
+  const date = today();
+  const out = {};
+  for (const [kind, cfg] of Object.entries(numbering)) {
+    const row = await one('SELECT last FROM doc_counters WHERE kind=$1 AND period=$2', [kind, counterPeriod(cfg.reset, date)]);
+    const n = (row?.last || 0) + 1;
+    out[kind] = { n, number: formatNumber(cfg, n, date) };
+  }
+  return out;
+}
+
 const CLIENT_COLS = ['name', 'nip', 'address', 'city', 'contact_person', 'phone', 'email', 'notes'];
 const SITE_COLS = ['client_id', 'name', 'address', 'city', 'building_type', 'panel_manufacturer', 'panel_model',
   'system_type', 'loops', 'monitoring', 'monitoring_operator', 'contract_number', 'contract_end',
-  'inspection_interval_months', 'last_inspection', 'on_site_contact', 'on_site_phone', 'notes'];
+  'inspection_interval_months', 'last_inspection', 'on_site_contact', 'on_site_phone', 'notes',
+  'responsible_name', 'responsible_position', 'responsible_phone', 'responsible_email'];
 const DEVICE_COLS = ['site_id', 'type', 'manufacturer', 'model', 'serial', 'loop_no', 'address_no', 'location',
   'quantity', 'installed_at', 'replace_by', 'status', 'notes'];
 const INSPECTION_COLS = ['site_id', 'type', 'scheduled_date', 'performed_date', 'technician_id', 'status', 'result',
@@ -774,7 +822,7 @@ const actions = {
     const site = await one(`${SITE_SELECT} WHERE s.id=$1`, [inspection.site_id]);
     const client = await one('SELECT * FROM clients WHERE id=$1', [site.client_id]);
     const devices = await q('SELECT * FROM devices WHERE site_id=$1 ORDER BY loop_no NULLS FIRST, address_no NULLS FIRST, type', [site.id]);
-    return { inspection, site, client, devices };
+    return { inspection, site, client, devices, company: await getCompany() };
   },
   async 'inspections.save'(p, user) {
     if (!p.site_id || !p.scheduled_date) throw new HttpError(400, 'Obiekt i data przeglądu są wymagane');
@@ -791,6 +839,10 @@ const actions = {
   // Mark as performed: update the site's last inspection and plan the next one.
   async 'inspections.complete'(p, user) {
     if (!p.performed_date || !p.result) throw new HttpError(400, 'Podaj datę wykonania i wynik przeglądu');
+    if (!p.protocol_number?.trim()) {
+      const saved = p.id && await one('SELECT protocol_number FROM inspections WHERE id=$1', [p.id]);
+      p = { ...p, protocol_number: saved?.protocol_number || await nextNumber('inspection', p.performed_date) };
+    }
     const row = await actions['inspections.save']({ ...p, status: 'wykonany' }, user);
     const site = await one('SELECT * FROM sites WHERE id=$1', [row.site_id]);
     await q('UPDATE sites SET last_inspection=GREATEST(COALESCE(last_inspection, $1::date), $1::date) WHERE id=$2', [row.performed_date, site.id]);
@@ -843,6 +895,91 @@ const actions = {
     return { ok: true };
   },
 
+  // --- service protocol (one per ticket) ---
+  async 'protocols.get'({ ticket_id }, user) {
+    await needEntity(user, 'ticket', ticket_id);
+    const ticket = await one(`${TICKET_SELECT} WHERE t.id=$1`, [ticket_id]);
+    const protocol = await one(`SELECT sp.*, u.name AS technician_name FROM service_protocols sp
+      LEFT JOIN users u ON u.id=sp.technician_id WHERE sp.ticket_id=$1`, [ticket_id]);
+    const site = await one(`${SITE_SELECT} WHERE s.id=$1`, [ticket.site_id]);
+    const client = await one('SELECT * FROM clients WHERE id=$1', [site.client_id]);
+    const panels = can(user, 'panels.view') ? await q(`SELECT p.id, p.name, p.manufacturer, p.model, p.serial FROM panels p
+      JOIN panel_sites ps ON ps.panel_id=p.id WHERE ps.site_id=$1 ORDER BY p.name, p.id`, [site.id]) : null;
+    return { protocol, ticket, site, client, panels, company: await getCompany() };
+  },
+  // Save the draft; `issue` gives it its number (once) and may close the ticket.
+  async 'protocols.save'({ ticket_id, issue, closeTicket, ...p }, user) {
+    const ticket = await needEntity(user, 'ticket', ticket_id);
+    const before = await one('SELECT * FROM service_protocols WHERE ticket_id=$1', [ticket_id]);
+    const data = Object.fromEntries(PROTOCOL_COLS.filter((c) => p[c] !== undefined).map((c) => [c, p[c] === '' ? null : p[c]]));
+    if (data.parts) data.parts = JSON.stringify((data.parts || []).filter((x) => x?.name?.trim()));
+    if (issue) {
+      const performed = data.performed_date ?? before?.performed_date;
+      const work = data.work_done ?? before?.work_done;
+      if (!performed || !work?.trim()) throw new HttpError(400, 'Do wystawienia protokołu podaj datę wykonania i opis wykonanych prac');
+      if (!before?.protocol_number) {
+        data.protocol_number = await nextNumber('service', performed);
+        data.issued_at = new Date().toISOString();
+      }
+    }
+    const cols = Object.keys(data);
+    const row = before
+      ? await one(`UPDATE service_protocols SET ${cols.map((c, i) => `${c}=$${i + 2}`).join(', ')}${cols.length ? ',' : ''} updated_at=now()
+          WHERE ticket_id=$1 RETURNING *`, [ticket_id, ...cols.map((c) => data[c])])
+      : await one(`INSERT INTO service_protocols (ticket_id${cols.map((c) => ', ' + c).join('')})
+          VALUES ($1${cols.map((_, i) => `, $${i + 2}`).join('')}) RETURNING *`, [ticket_id, ...cols.map((c) => data[c])]);
+    if (data.protocol_number) {
+      await logEvent({ site_id: ticket.site_id, entity: 'ticket', entity_id: ticket.id, entity_label: ENTITY_LABEL.ticket(ticket), kind: 'protokół',
+        summary: `Wystawiono protokół serwisowy ${row.protocol_number}`, event_date: row.performed_date, user });
+      if (closeTicket && ticket.status !== 'zakończone') {
+        await actions['tickets.save']({ ...ticket, status: 'zakończone', resolution: ticket.resolution || row.work_done }, user);
+      }
+    }
+    return row;
+  },
+
+  // --- settings ---
+  async 'settings.get'() {
+    return { company: await getCompany(), numbering: await getNumbering(), next: await peekNumbers(), kinds: DOC_KINDS };
+  },
+  async 'settings.save'({ company, numbering }, user) {
+    if (company) {
+      const before = await getCompany();
+      const clean = Object.fromEntries(Object.keys(COMPANY_FIELDS).map((k) => [k, company[k]?.trim() || null]));
+      await putSetting('company', clean);
+      const changes = fieldChanges(before, clean, COMPANY_FIELDS);
+      if (changes.length) await audit(user, 'zmiana', 'settings', 'company', 'Dane firmy', changes);
+    }
+    if (numbering) {
+      const before = await getNumbering();
+      const next = {};
+      const changes = [];
+      for (const kind of Object.keys(DOC_KINDS)) {
+        const cfg = { ...before[kind], ...numbering[kind] };
+        const clean = { pattern: String(cfg.pattern).trim(), digits: Number(cfg.digits), reset: cfg.reset };
+        try { checkNumbering(clean); } catch (e) { throw new HttpError(400, `${DOC_KINDS[kind].label}: ${e.message}`); }
+        next[kind] = clean;
+        const label = DOC_KINDS[kind].label;
+        if (clean.pattern !== before[kind].pattern) changes.push({ label: `${label} — wzorzec`, from: before[kind].pattern, to: clean.pattern });
+        if (clean.digits !== before[kind].digits) changes.push({ label: `${label} — cyfry`, from: String(before[kind].digits), to: String(clean.digits) });
+        if (clean.reset !== before[kind].reset) changes.push({ label: `${label} — numeracja`, from: RESET_LABEL[before[kind].reset], to: RESET_LABEL[clean.reset] });
+      }
+      await putSetting('numbering', next);
+      // "next number" moves the counter of the current period (e.g. continuing paper numbering)
+      const peek = await peekNumbers();
+      for (const kind of Object.keys(DOC_KINDS)) {
+        const n = Number(numbering[kind]?.next);
+        if (!n || n === peek[kind].n) continue;
+        if (!(n >= 1 && n < 1e8)) throw new HttpError(400, `${DOC_KINDS[kind].label}: nieprawidłowy następny numer`);
+        await q(`INSERT INTO doc_counters (kind, period, last) VALUES ($1, $2, $3)
+          ON CONFLICT (kind, period) DO UPDATE SET last=EXCLUDED.last`, [kind, counterPeriod(next[kind].reset, today()), n - 1]);
+        changes.push({ label: `${DOC_KINDS[kind].label} — następny numer`, from: String(peek[kind].n), to: String(n) });
+      }
+      if (changes.length) await audit(user, 'zmiana', 'settings', 'numbering', 'Numeracja dokumentów', changes);
+    }
+    return actions['settings.get']();
+  },
+
   // --- demo data ---
   async 'demo.seed'(_, user) {
     if (await one('SELECT 1 FROM clients WHERE demo LIMIT 1')) throw new HttpError(400, 'Dane demonstracyjne są już wczytane');
@@ -880,6 +1017,8 @@ const REQUIRES = {
   'inspections.list': ['inspections.view'], 'inspections.get': ['inspections.view'], 'inspections.save': ['inspections.edit'],
   'inspections.complete': ['inspections.complete'], 'inspections.delete': ['inspections.delete'],
   'tickets.list': ['tickets.view'], 'tickets.save': ['tickets.create', 'tickets.edit'], 'tickets.delete': ['tickets.delete'],
+  'protocols.get': ['tickets.view'], 'protocols.save': ['tickets.edit'],
+  'settings.save': ['settings.manage'],
   'demo.seed': ['demo.manage'], 'demo.clear': ['demo.manage'],
 };
 

@@ -216,6 +216,38 @@ CREATE TABLE IF NOT EXISTS audit_log (
 );
 CREATE INDEX IF NOT EXISTS audit_log_created_idx ON audit_log(created_at DESC);
 
+-- Person responsible for the site; signs inspection and service protocols.
+ALTER TABLE sites ADD COLUMN IF NOT EXISTS responsible_name TEXT;
+ALTER TABLE sites ADD COLUMN IF NOT EXISTS responsible_position TEXT;
+ALTER TABLE sites ADD COLUMN IF NOT EXISTS responsible_phone TEXT;
+ALTER TABLE sites ADD COLUMN IF NOT EXISTS responsible_email TEXT;
+
+-- Service protocol: one per ticket. Draft until issued — then it gets its number (see doc_counters).
+CREATE TABLE IF NOT EXISTS service_protocols (
+  id SERIAL PRIMARY KEY,
+  ticket_id INT NOT NULL UNIQUE REFERENCES tickets(id) ON DELETE CASCADE,
+  protocol_number TEXT,
+  issued_at TIMESTAMPTZ,
+  performed_date DATE,
+  technician_id INT REFERENCES users(id) ON DELETE SET NULL,
+  work_done TEXT,
+  parts JSONB NOT NULL DEFAULT '[]'::jsonb,
+  system_state TEXT,
+  recommendations TEXT,
+  signer_name TEXT,
+  signer_position TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Running numbers of documents per kind and period ('2026', '2026-03' or '-').
+CREATE TABLE IF NOT EXISTS doc_counters (
+  kind TEXT NOT NULL,
+  period TEXT NOT NULL,
+  last INT NOT NULL DEFAULT 0,
+  PRIMARY KEY (kind, period)
+);
+
 -- Photos attached to a history entry (resized in the browser; full image + thumbnail in private storage).
 CREATE TABLE IF NOT EXISTS history_photos (
   id SERIAL PRIMARY KEY,

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
-import { Plus, Search } from 'lucide-react';
+import { Plus, Search, FileCheck2 } from 'lucide-react';
 import { useAuth } from '../auth';
 import { useApi, Card, Table, PageHeader, Button, Input, Select, ErrorBox, Badge } from '../ui';
 import { fmtDateTime, fmtDate, daysUntil, TICKET_PRIORITIES, TICKET_STATUSES } from '../format';
@@ -38,7 +38,8 @@ export default function Tickets() {
             <div className="flex items-start gap-2.5">
               <span className={`mt-1.5 w-2 h-2 rounded-full shrink-0 ${t.status === 'zakończone' ? 'bg-ok' : t.priority === 'krytyczny' ? 'bg-signal pulse-dot' : t.priority === 'wysoki' ? 'bg-amber' : 'bg-line'}`} />
               <div><div className="font-medium">{t.title}</div>
-                <div className="text-[12px] text-muted"><Link onClick={(e) => e.stopPropagation()} to={`/obiekty/${t.site_id}`} className="hover:text-signal">{t.site_name}</Link> · {t.client_name}</div></div>
+                <div className="text-[12px] text-muted"><Link onClick={(e) => e.stopPropagation()} to={`/obiekty/${t.site_id}`} className="hover:text-signal">{t.site_name}</Link> · {t.client_name}
+                  {t.protocol_number && <> · <Link onClick={(e) => e.stopPropagation()} to={`/zgloszenia/${t.id}/protokol`} className="inline-flex items-center gap-0.5 text-ok hover:text-signal"><FileCheck2 size={11} />{t.protocol_number}</Link></>}</div></div>
             </div>
           ) },
           { key: 'category', label: 'Kategoria', className: 'hidden lg:table-cell capitalize' },

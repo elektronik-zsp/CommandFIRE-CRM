@@ -5,6 +5,7 @@ import { api } from '../api';
 import { useAuth } from '../auth';
 import { useApi, Card, PageHeader, Button, Spinner, ErrorBox, Field, Input, Select, Badge, KV } from '../ui';
 import { fmtDate, todayISO, INSPECTION_TYPES, INSPECTION_RESULTS } from '../format';
+import { CompanyHeader, Signatures, CompanyFooter } from '../components/PrintParts';
 
 const STATES = [
   { v: 'ok', label: 'Sprawne', icon: Check, on: 'bg-ok text-white border-ok' },
@@ -29,7 +30,7 @@ export default function InspectionDetail() {
 
   if (error) return <ErrorBox>{error}</ErrorBox>;
   if (!data || !form) return <Spinner />;
-  const { site, client, devices } = data;
+  const { site, client, devices, company } = data;
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
   const setItem = (idx, patch) => set('checklist', form.checklist.map((c, i) => (i === idx ? { ...c, ...patch } : c)));
   const done = form.status === 'wykonany';
@@ -49,7 +50,6 @@ export default function InspectionDetail() {
         const p = payload();
         if (!p.performed_date) p.performed_date = todayISO();
         if (!p.result) p.result = faults ? 'pozytywny z uwagami' : 'pozytywny';
-        if (!p.protocol_number) p.protocol_number = `PR/${p.performed_date.slice(0, 4)}/${String(form.id).padStart(4, '0')}`;
         const r = await api('inspections.complete', p);
         setMsg({ ok: true, text: r.next ? `Przegląd zamknięty. Następny zaplanowano na ${fmtDate(r.next.scheduled_date)}.` : 'Przegląd zamknięty.' });
       }
@@ -126,7 +126,7 @@ export default function InspectionDetail() {
                   <Field label="Data wykonania"><Input type="date" value={form.performed_date || ''} onChange={(e) => set('performed_date', e.target.value)} /></Field>
                 </div>
                 <Field label="Technik"><Select value={form.technician_id} onChange={(e) => set('technician_id', e.target.value)} placeholder="—" options={(users.data || []).map((u) => ({ value: String(u.id), label: u.name }))} /></Field>
-                <Field label="Nr protokołu" hint={!form.protocol_number ? 'Nadawany automatycznie przy zamknięciu' : undefined}><Input value={form.protocol_number || ''} onChange={(e) => set('protocol_number', e.target.value)} /></Field>
+                <Field label="Nr protokołu" hint={!form.protocol_number ? 'Nadawany przy zamknięciu wg wzorca z Ustawień' : undefined}><Input value={form.protocol_number || ''} onChange={(e) => set('protocol_number', e.target.value)} /></Field>
                 <Field label="Wynik"><Select value={form.result || ''} onChange={(e) => set('result', e.target.value)} options={INSPECTION_RESULTS} placeholder="—" /></Field>
               </div>
             </Card>
@@ -153,12 +153,10 @@ export default function InspectionDetail() {
 
       {/* ---------- printable protocol ---------- */}
       <div className="hidden print:block text-[11px] leading-snug text-black">
-        <div className="flex justify-between items-start border-b-2 border-black pb-2 mb-3">
-          <div>
-            <div className="font-display text-[22px] font-bold uppercase">Protokół z przeglądu systemu sygnalizacji pożarowej</div>
-            <div>{form.type} · nr {form.protocol_number || '—'}</div>
-          </div>
-          <div className="text-right">Data wykonania: <b>{fmtDate(form.performed_date)}</b><br />Wynik: <b>{form.result || '—'}</b></div>
+        <CompanyHeader company={company} title="Protokół przeglądu" number={form.protocol_number} date={fmtDate(form.performed_date)} />
+        <div className="flex justify-between mb-3">
+          <div className="font-display text-[15px] font-bold uppercase">Przegląd systemu sygnalizacji pożarowej — {form.type}</div>
+          <div>Wynik: <b>{form.result || '—'}</b></div>
         </div>
         <table className="w-full mb-3"><tbody>
           <tr><td className="w-1/2 align-top pr-4"><b>Zleceniodawca:</b><br />{client.name}<br />{[client.address, client.city].filter(Boolean).join(', ')}{client.nip && <><br />NIP {client.nip}</>}</td>
@@ -174,10 +172,9 @@ export default function InspectionDetail() {
         </table>
         <div className="mb-2"><b>Stwierdzone usterki i uwagi:</b><div className="whitespace-pre-wrap min-h-8">{form.findings || 'brak'}</div></div>
         <div className="mb-8"><b>Zalecenia:</b><div className="whitespace-pre-wrap min-h-8">{form.recommendations || 'brak'}</div></div>
-        <div className="grid grid-cols-2 gap-16 mt-12">
-          <div className="border-t border-black pt-1 text-center">Wykonał: {technician?.name || ''}</div>
-          <div className="border-t border-black pt-1 text-center">Przedstawiciel użytkownika obiektu</div>
-        </div>
+        <Signatures left={{ label: 'Wykonał', name: technician?.name }}
+          right={{ label: 'Przedstawiciel użytkownika obiektu', name: site.responsible_name, sub: site.responsible_position }} />
+        <CompanyFooter company={company} />
       </div>
     </>
   );

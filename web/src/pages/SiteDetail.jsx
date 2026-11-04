@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate, useParams, Link, useSearchParams } from 'react-router-dom';
-import { Pencil, Plus, ArrowLeft, CalendarPlus, Siren, Radio, Phone, CircuitBoard, Link2 } from 'lucide-react';
+import { Pencil, Plus, ArrowLeft, CalendarPlus, Siren, Radio, Phone, Mail, CircuitBoard, Link2 } from 'lucide-react';
 import { api } from '../api';
 import { useAuth } from '../auth';
 import { useApi, Card, Table, PageHeader, Button, FormModal, Spinner, ErrorBox, KV, Badge, Tabs, Empty, Select } from '../ui';
@@ -112,6 +112,16 @@ export default function SiteDetail() {
               ['Rodzaj', site.building_type],
               ['Kontakt', site.on_site_contact],
               ['Telefon', site.on_site_phone && <a className="inline-flex items-center gap-1 hover:text-signal" href={`tel:${site.on_site_phone}`}><Phone size={12} />{site.on_site_phone}</a>],
+              ['Odpowiedzialny', site.responsible_name ? (
+                <div>
+                  <div>{site.responsible_name}{site.responsible_position && <span className="text-muted"> · {site.responsible_position}</span>}</div>
+                  <div className="flex flex-wrap gap-x-3 text-[12.5px]">
+                    {site.responsible_phone && <a className="inline-flex items-center gap-1 hover:text-signal" href={`tel:${site.responsible_phone}`}><Phone size={12} />{site.responsible_phone}</a>}
+                    {site.responsible_email && <a className="inline-flex items-center gap-1 hover:text-signal" href={`mailto:${site.responsible_email}`}><Mail size={12} />{site.responsible_email}</a>}
+                  </div>
+                  <div className="text-[11.5px] text-muted">podpisuje protokoły</div>
+                </div>
+              ) : <span className="text-muted">nie wskazano — uzupełnij w edycji obiektu</span>],
               ['Notatki', site.notes && <span className="whitespace-pre-wrap">{site.notes}</span>],
             ]} />
           </Card>

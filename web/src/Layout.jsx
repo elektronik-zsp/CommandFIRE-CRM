@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
-import { Gauge, Building2, MapPin, ClipboardCheck, Siren, Users as UsersIcon, LogOut, KeyRound, Menu, X } from 'lucide-react';
+import { Gauge, Building2, MapPin, ClipboardCheck, Siren, Users as UsersIcon, LogOut, KeyRound, Menu, X, Settings } from 'lucide-react';
 import { useAuth } from './auth';
 import { api } from './api';
 import { FormModal } from './ui';
@@ -13,6 +13,7 @@ const NAV = [
   { to: '/obiekty', label: 'Obiekty', icon: MapPin, perm: 'sites.view' },
   { to: '/klienci', label: 'Klienci', icon: Building2, perm: 'clients.view' },
   { to: '/uzytkownicy', label: 'Zespół', icon: UsersIcon },
+  { to: '/ustawienia', label: 'Ustawienia', icon: Settings, perm: 'settings.manage' },
 ];
 
 export function Logo({ light }) {
