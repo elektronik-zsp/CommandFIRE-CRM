@@ -814,7 +814,8 @@ const PUBLIC = new Set(['auth.login', 'setup.admin']);
 
 // Permission required by each action (any of the listed). Finer checks (own work, own files…) live in the actions.
 const REQUIRES = {
-  'clients.list': ['clients.view', 'sites.edit'], // also the client picker in the site form 'clients.get': ['clients.view'], 'clients.save': ['clients.edit'], 'clients.delete': ['clients.delete'],
+  // clients.list also feeds the client picker in the site form
+  'clients.list': ['clients.view', 'sites.edit'], 'clients.get': ['clients.view'], 'clients.save': ['clients.edit'], 'clients.delete': ['clients.delete'],
   // the site list also feeds the site pickers in ticket / inspection forms
   'sites.list': ['sites.view', 'tickets.view', 'inspections.view'],
   'sites.get': ['sites.view'], 'sites.save': ['sites.edit'], 'sites.delete': ['sites.delete'],
