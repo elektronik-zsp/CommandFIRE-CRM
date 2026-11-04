@@ -142,12 +142,13 @@ export function Modal({ title, onClose, children, wide }) {
 }
 
 // ---------- forms ----------
-const INPUT = 'w-full h-9 px-2.5 bg-white border border-line rounded-[3px] text-[13.5px] outline-none focus:border-ink focus:ring-2 focus:ring-ink/10 transition';
+const INPUT = 'h-9 px-2.5 bg-white border border-line rounded-[3px] text-[13.5px] outline-none focus:border-ink focus:ring-2 focus:ring-ink/10 transition';
 
-export function Input(props) { return <input {...props} className={`${INPUT} ${props.className || ''}`} />; }
+const width = (c = '') => (/(^|\s)w-/.test(c) ? c : `w-full ${c}`);
+export function Input(props) { return <input {...props} className={`${INPUT} ${width(props.className)}`} />; }
 export function Select({ options, placeholder, ...props }) {
   return (
-    <select {...props} className={`${INPUT} pr-7 ${props.className || ''}`}>
+    <select {...props} className={`${INPUT} pr-7 ${width(props.className)}`}>
       {placeholder !== undefined && <option value="">{placeholder}</option>}
       {options.map((o) => typeof o === 'object'
         ? <option key={o.value} value={o.value}>{o.label}</option>
@@ -198,7 +199,7 @@ export function FormModal({ title, fields, initial = {}, onSubmit, onClose, onDe
             const v = values[f.name] ?? '';
             const common = { value: v, required: f.required, placeholder: f.placeholder, onChange: (e) => set(f.name, e.target.value) };
             let input;
-            if (f.type === 'textarea') input = <textarea {...common} rows={f.rows || 3} className={`${INPUT} h-auto py-2 resize-y`} />;
+            if (f.type === 'textarea') input = <textarea {...common} rows={f.rows || 3} className={`${INPUT} w-full h-auto py-2 resize-y`} />;
             else if (f.type === 'select') input = <Select {...common} options={f.options} placeholder={f.required ? undefined : '—'} />;
             else if (f.type === 'checkbox') input = (
               <span className="flex items-center gap-2 h-9">

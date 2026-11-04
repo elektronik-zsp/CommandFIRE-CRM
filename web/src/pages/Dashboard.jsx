@@ -131,7 +131,7 @@ export default function Dashboard() {
               return (
                 <li key={d.id}><Link to={`/obiekty/${d.site_id}?tab=urzadzenia`} className="flex items-center justify-between gap-3 px-4 py-2.5 border-b border-line/70 last:border-0 hover:bg-paper/70">
                   <div className="min-w-0"><div className="font-medium truncate">{d.type}{d.quantity > 1 && <span className="text-muted"> ×{d.quantity}</span>}</div><div className="text-[12px] text-muted truncate">{d.site_name}</div></div>
-                  <div className="text-right shrink-0"><div className="font-mono text-[12px]">{fmtDate(d.replace_by)}</div><Badge tone={dueTone(n)}>{relDays(n)}</Badge></div>
+                  <div className="text-right shrink-0"><div className="font-mono text-[12px]">{fmtDate(d.replace_by)}</div><Badge tone={dueTone(n - 30)}>{relDays(n)}</Badge></div>
                 </Link></li>
               );
             })}</ul>
@@ -144,7 +144,7 @@ export default function Dashboard() {
               return (
                 <li key={s.id}><Link to={`/obiekty/${s.id}`} className="flex items-center justify-between gap-3 px-4 py-2.5 border-b border-line/70 last:border-0 hover:bg-paper/70">
                   <div className="min-w-0"><div className="font-medium truncate">{s.name}</div><div className="text-[12px] text-muted truncate">{s.contract_number} · {s.client_name}</div></div>
-                  <div className="text-right shrink-0"><div className="font-mono text-[12px]">{fmtDate(s.contract_end)}</div><Badge tone={dueTone(n)}>{relDays(n)}</Badge></div>
+                  <div className="text-right shrink-0"><div className="font-mono text-[12px]">{fmtDate(s.contract_end)}</div><Badge tone={dueTone(n - 30)}>{relDays(n)}</Badge></div>
                 </Link></li>
               );
             })}</ul>
