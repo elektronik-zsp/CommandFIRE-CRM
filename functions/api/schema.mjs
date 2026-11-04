@@ -1,0 +1,121 @@
+// Database schema — applied idempotently on cold start.
+export const SCHEMA = `
+CREATE TABLE IF NOT EXISTS users (
+  id SERIAL PRIMARY KEY,
+  email TEXT UNIQUE NOT NULL,
+  name TEXT NOT NULL,
+  phone TEXT,
+  role TEXT NOT NULL DEFAULT 'technik',
+  password_hash TEXT NOT NULL,
+  active BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS clients (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  nip TEXT,
+  address TEXT,
+  city TEXT,
+  contact_person TEXT,
+  phone TEXT,
+  email TEXT,
+  notes TEXT,
+  demo BOOLEAN NOT NULL DEFAULT false,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS sites (
+  id SERIAL PRIMARY KEY,
+  client_id INT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  address TEXT,
+  city TEXT,
+  building_type TEXT,
+  panel_manufacturer TEXT,
+  panel_model TEXT,
+  system_type TEXT,
+  loops INT,
+  monitoring BOOLEAN NOT NULL DEFAULT false,
+  monitoring_operator TEXT,
+  contract_number TEXT,
+  contract_end DATE,
+  inspection_interval_months INT NOT NULL DEFAULT 6,
+  last_inspection DATE,
+  on_site_contact TEXT,
+  on_site_phone TEXT,
+  notes TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS sites_client_idx ON sites(client_id);
+
+CREATE TABLE IF NOT EXISTS devices (
+  id SERIAL PRIMARY KEY,
+  site_id INT NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+  type TEXT NOT NULL,
+  manufacturer TEXT,
+  model TEXT,
+  serial TEXT,
+  loop_no INT,
+  address_no INT,
+  location TEXT,
+  quantity INT NOT NULL DEFAULT 1,
+  installed_at DATE,
+  replace_by DATE,
+  status TEXT NOT NULL DEFAULT 'sprawne',
+  notes TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS devices_site_idx ON devices(site_id);
+
+CREATE TABLE IF NOT EXISTS inspections (
+  id SERIAL PRIMARY KEY,
+  site_id INT NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+  type TEXT NOT NULL DEFAULT 'przegląd okresowy',
+  scheduled_date DATE NOT NULL,
+  performed_date DATE,
+  technician_id INT REFERENCES users(id) ON DELETE SET NULL,
+  status TEXT NOT NULL DEFAULT 'zaplanowany',
+  result TEXT,
+  protocol_number TEXT,
+  checklist JSONB NOT NULL DEFAULT '[]'::jsonb,
+  findings TEXT,
+  recommendations TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS inspections_site_idx ON inspections(site_id);
+CREATE INDEX IF NOT EXISTS inspections_sched_idx ON inspections(scheduled_date);
+
+CREATE TABLE IF NOT EXISTS tickets (
+  id SERIAL PRIMARY KEY,
+  site_id INT NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  description TEXT,
+  category TEXT NOT NULL DEFAULT 'awaria',
+  priority TEXT NOT NULL DEFAULT 'normalny',
+  status TEXT NOT NULL DEFAULT 'nowe',
+  assigned_to INT REFERENCES users(id) ON DELETE SET NULL,
+  reported_by TEXT,
+  reported_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  due_date DATE,
+  resolved_at TIMESTAMPTZ,
+  resolution TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS tickets_site_idx ON tickets(site_id);
+`;
+
+// Default checklist for a periodic SSP inspection.
+export const DEFAULT_CHECKLIST = [
+  'Centrala — sygnalizacja stanów, wskaźniki, panel obsługi, rejestr zdarzeń',
+  'Zasilanie podstawowe 230 V i zabezpieczenia',
+  'Zasilanie rezerwowe — pomiar napięcia i stanu akumulatorów',
+  'Test czujek pożarowych (wyzwolenie testowe)',
+  'Test ręcznych ostrzegaczy pożarowych (ROP)',
+  'Sygnalizatory akustyczne i optyczne',
+  'Linie dozorowe — ciągłość pętli, izolacja, zwarcia',
+  'Transmisja alarmów i uszkodzeń do PSP / stacji monitoringu',
+  'Sterowania pożarowe (oddymianie, wentylacja, windy, drzwi, DSO)',
+  'Czystość i oznakowanie elementów, dostęp do ROP',
+  'Dokumentacja, książka eksploatacji, instrukcja obsługi',
+].map((label) => ({ label, state: '', note: '' }));
