@@ -754,7 +754,7 @@ const actions = {
       counts[siteId] = (counts[siteId] || 0) + 1;
     }
     const per = Object.entries(counts).map(([id, n]) => `${allowed.get(Number(id))}: ${n}`).join(', ');
-    await logEvent({ site_id: null, entity: 'panel', entity_id: panel.id, entity_label: ENTITY_LABEL.panel(panel), kind: 'import', user,
+    if (created || updated) await logEvent({ site_id: null, entity: 'panel', entity_id: panel.id, entity_label: ENTITY_LABEL.panel(panel), kind: 'import', user,
       summary: `Import elementów z pliku${filename ? ` ${filename}` : ''}: dodano ${created}, zaktualizowano ${updated}${skipped ? `, pominięto ${skipped}` : ''}${per ? ` (${per})` : ''}` });
     return { created, updated, skipped };
   },
