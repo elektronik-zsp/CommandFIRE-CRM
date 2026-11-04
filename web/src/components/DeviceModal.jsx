@@ -29,7 +29,7 @@ export default function DeviceModal({ device, onClose, onSaved, initialTab = 'da
           {tab === 'dane' && form}
           {tab === 'historia' && (
             <div className="flex flex-col gap-4">
-              <AddEntry kinds={DEVICE_EVENT_KINDS} placeholder="Co zostało zrobione / stwierdzone…"
+              <AddEntry photos kinds={DEVICE_EVENT_KINDS} placeholder="Co zostało zrobione / stwierdzone…"
                 extras={(kind, v, set) => kind === 'wymiana' && (
                   <div className="grid sm:grid-cols-2 gap-2.5">
                     <Field label="Nowy nr seryjny"><Input value={v.serial || ''} onChange={(e) => set('serial', e.target.value)} placeholder="opcjonalnie" /></Field>
@@ -38,7 +38,7 @@ export default function DeviceModal({ device, onClose, onSaved, initialTab = 'da
                 )}
                 onSubmit={async (v) => {
                   const r = await api('devices.event', {
-                    device_id: device.id, kind: v.kind, event_date: v.event_date, comment: v.comment,
+                    device_id: device.id, kind: v.kind, event_date: v.event_date, comment: v.comment, photos: v.photos,
                     ...(v.kind === 'wymiana' ? { serial: v.serial || undefined, replace_by: v.replace_by || null } : {}),
                   });
                   setCurrent(r.device);

@@ -167,6 +167,20 @@ CREATE TABLE IF NOT EXISTS history (
 );
 CREATE INDEX IF NOT EXISTS history_entity_idx ON history(entity, entity_id);
 CREATE INDEX IF NOT EXISTS history_site_idx ON history(site_id);
+
+-- Photos attached to a history entry (resized in the browser; full image + thumbnail in private storage).
+CREATE TABLE IF NOT EXISTS history_photos (
+  id SERIAL PRIMARY KEY,
+  history_id INT NOT NULL REFERENCES history(id) ON DELETE CASCADE,
+  s3_key TEXT NOT NULL,
+  thumb_key TEXT NOT NULL,
+  filename TEXT,
+  size INT NOT NULL,
+  width INT,
+  height INT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS history_photos_history_idx ON history_photos(history_id);
 `;
 
 // Default checklist for a periodic SSP inspection.

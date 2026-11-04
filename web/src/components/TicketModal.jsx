@@ -33,8 +33,8 @@ export default function TicketModal({ ticket = {}, onClose, onSaved, initialTab 
           {tab === 'dane' && form}
           {tab === 'historia' && (
             <div className="flex flex-col gap-4">
-              <AddEntry kinds={['komentarz']} withDate={false} placeholder="Dodaj komentarz — ustalenia z klientem, postęp prac…" submitLabel="Dodaj komentarz"
-                onSubmit={async (v) => { await api('history.add', { entity: 'ticket', entity_id: ticket.id, kind: 'komentarz', comment: v.comment }); history.reload(); }} />
+              <AddEntry photos kinds={['komentarz']} withDate={false} placeholder="Dodaj komentarz — ustalenia z klientem, postęp prac… (zdjęcie można też wkleić Ctrl+V)" submitLabel="Dodaj komentarz"
+                onSubmit={async (v) => { await api('history.add', { entity: 'ticket', entity_id: ticket.id, kind: 'komentarz', comment: v.comment, photos: v.photos }); history.reload(); }} />
               {history.data ? <HistoryList rows={history.data} onChanged={history.reload} /> : <Spinner />}
             </div>
           )}

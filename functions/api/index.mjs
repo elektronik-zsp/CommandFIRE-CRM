@@ -143,6 +143,54 @@ async function purgeFiles(where, params) {
     .catch((e) => console.error('[s3] delete failed', r.s3_key, e.message))));
 }
 
+// ---------- photos on history entries ----------
+
+const MAX_PHOTOS = 8;
+const MAX_PHOTO_BYTES = 4.4 * 1024 * 1024; // all photos of one entry together
+const isJpeg = (b) => b.length > 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff;
+
+// photos: [{ data, thumb, filename, width, height }] — base64 JPEGs prepared by the browser
+async function savePhotos(entry, photos) {
+  if (!photos?.length) return [];
+  if (photos.length > MAX_PHOTOS) throw new HttpError(400, `Maksymalnie ${MAX_PHOTOS} zdjęć w jednym wpisie`);
+  const bufs = photos.map((p) => ({ ...p, full: Buffer.from(p.data || '', 'base64'), small: Buffer.from(p.thumb || '', 'base64') }));
+  if (bufs.some((p) => !isJpeg(p.full) || !isJpeg(p.small))) throw new HttpError(400, 'Nieprawidłowy plik zdjęcia');
+  if (bufs.reduce((a, p) => a + p.full.length + p.small.length, 0) > MAX_PHOTO_BYTES) throw new HttpError(400, 'Zdjęcia są za duże — dodaj mniej zdjęć naraz');
+  const saved = [];
+  for (const p of bufs) {
+    const base = `photos/site-${entry.site_id}/h-${entry.id}/${crypto.randomBytes(8).toString('hex')}`;
+    await Promise.all([
+      s3.send(new PutObjectCommand({ Bucket: BUCKET, Key: `${base}.jpg`, Body: p.full, ContentType: 'image/jpeg' })),
+      s3.send(new PutObjectCommand({ Bucket: BUCKET, Key: `${base}-thumb.jpg`, Body: p.small, ContentType: 'image/jpeg' })),
+    ]);
+    saved.push(await one(`INSERT INTO history_photos (history_id, s3_key, thumb_key, filename, size, width, height)
+      VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+    [entry.id, `${base}.jpg`, `${base}-thumb.jpg`, String(p.filename || '').slice(0, 200) || null, p.full.length, p.width || null, p.height || null]));
+  }
+  return saved;
+}
+
+const presign = (key) => getSignedUrl(s3, new GetObjectCommand({ Bucket: BUCKET, Key: key }), { expiresIn: 3600 });
+
+// Add `photos: [{ id, url, thumb, width, height }]` to history rows (signed for 1 h).
+async function attachPhotos(rows) {
+  const ids = rows.map((r) => r.id);
+  const photos = ids.length ? await q('SELECT * FROM history_photos WHERE history_id = ANY($1) ORDER BY id', [ids]) : [];
+  const signed = await Promise.all(photos.map(async (p) => ({
+    history_id: p.history_id, id: p.id, width: p.width, height: p.height, filename: p.filename,
+    url: await presign(p.s3_key), thumb: await presign(p.thumb_key),
+  })));
+  for (const r of rows) r.photos = signed.filter((p) => p.history_id === r.id);
+  return rows;
+}
+
+async function purgePhotos(where, params) {
+  const rows = await q(`SELECT p.s3_key, p.thumb_key FROM history_photos p JOIN history h ON h.id=p.history_id
+    JOIN sites s ON s.id=h.site_id WHERE ${where}`, params);
+  await Promise.all(rows.flatMap((r) => [r.s3_key, r.thumb_key]).map((Key) => s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key }))
+    .catch((e) => console.error('[s3] delete failed', Key, e.message))));
+}
+
 // ---------- auth ----------
 
 // Signing key lives in the database so tokens survive redeploys (the env API key rotates).
@@ -328,6 +376,7 @@ const actions = {
   async 'clients.delete'({ id }, user) {
     requireAdmin(user);
     await purgeFiles('s.client_id=$1', [id]);
+    await purgePhotos('s.client_id=$1', [id]);
     await q('DELETE FROM clients WHERE id=$1', [id]);
     return { ok: true };
   },
@@ -346,8 +395,8 @@ const actions = {
     const inspections = await q(`${INSPECTION_SELECT} WHERE i.site_id=$1 ORDER BY COALESCE(i.performed_date, i.scheduled_date) DESC`, [id]);
     const tickets = await q(`${TICKET_SELECT} WHERE t.site_id=$1 ORDER BY t.reported_at DESC`, [id]);
     const panels = await q(`${PANEL_SELECT} WHERE p.site_id=$1 ORDER BY p.id`, [id]);
-    const history = await q(`${HISTORY_SELECT} WHERE h.site_id=$1 AND h.entity IN ('device','panel')
-      ORDER BY h.event_date DESC, h.id DESC LIMIT 300`, [id]);
+    const history = await attachPhotos(await q(`${HISTORY_SELECT} WHERE h.site_id=$1 AND h.entity IN ('device','panel')
+      ORDER BY h.event_date DESC, h.id DESC LIMIT 300`, [id]));
     return { site, devices, inspections, tickets, panels, history };
   },
   async 'sites.save'(p) {
@@ -357,6 +406,7 @@ const actions = {
   async 'sites.delete'({ id }, user) {
     requireAdmin(user);
     await purgeFiles('s.id=$1', [id]);
+    await purgePhotos('s.id=$1', [id]);
     await q('DELETE FROM sites WHERE id=$1', [id]);
     return { ok: true };
   },
@@ -375,10 +425,10 @@ const actions = {
     return { ok: true };
   },
   // Service entry for a device (test, repair, replacement…); may update the device itself.
-  async 'devices.event'({ device_id, kind, event_date, comment, replace_by, serial }, user) {
+  async 'devices.event'({ device_id, kind, event_date, comment, replace_by, serial, photos }, user) {
     const def = DEVICE_EVENTS[kind];
     if (!def) throw new HttpError(400, 'Nieznany rodzaj wpisu');
-    if (kind === 'notatka' && !comment?.trim()) throw new HttpError(400, 'Wpisz treść notatki');
+    if (kind === 'notatka' && !comment?.trim() && !photos?.length) throw new HttpError(400, 'Wpisz treść notatki lub dodaj zdjęcie');
     const before = await one('SELECT * FROM devices WHERE id=$1', [device_id]);
     if (!before) throw new HttpError(404, 'Nie znaleziono elementu');
     const patch = { ...def.effect };
@@ -390,20 +440,23 @@ const actions = {
     const row = Object.keys(patch).length ? await save('devices', DEVICE_COLS, { id: before.id, ...patch }) : before;
     const entry = await logEvent({ site_id: row.site_id, entity: 'device', entity_id: row.id, entity_label: ENTITY_LABEL.device(row),
       kind, summary: def.summary, changes: diff(before, row, Object.keys(patch)), comment, event_date, user });
+    await savePhotos(entry, photos);
     return { device: row, entry };
   },
 
   // --- history ---
   async 'history.list'({ entity, entity_id }) {
     if (!ENTITY_TABLE[entity]) throw new HttpError(400, 'Nieznany typ rekordu');
-    return q(`${HISTORY_SELECT} WHERE h.entity=$1 AND h.entity_id=$2 ORDER BY h.event_date DESC, h.id DESC`, [entity, entity_id]);
+    return attachPhotos(await q(`${HISTORY_SELECT} WHERE h.entity=$1 AND h.entity_id=$2 ORDER BY h.event_date DESC, h.id DESC`, [entity, entity_id]));
   },
-  async 'history.add'({ entity, entity_id, kind, comment, event_date }, user) {
+  async 'history.add'({ entity, entity_id, kind, comment, event_date, photos }, user) {
     if (!MANUAL_KINDS[entity]?.includes(kind)) throw new HttpError(400, 'Nieznany rodzaj wpisu');
-    if (!comment?.trim()) throw new HttpError(400, 'Wpisz treść');
+    if (!comment?.trim() && !photos?.length) throw new HttpError(400, 'Wpisz treść lub dodaj zdjęcie');
     const row = await one(`SELECT * FROM ${ENTITY_TABLE[entity]} WHERE id=$1`, [entity_id]);
     if (!row) throw new HttpError(404, 'Nie znaleziono rekordu');
-    return logEvent({ site_id: row.site_id, entity, entity_id: row.id, entity_label: ENTITY_LABEL[entity](row), kind, comment: comment.trim(), event_date, user });
+    const entry = await logEvent({ site_id: row.site_id, entity, entity_id: row.id, entity_label: ENTITY_LABEL[entity](row), kind, comment: comment?.trim(), event_date, user });
+    await savePhotos(entry, photos);
+    return entry;
   },
   async 'history.delete'({ id }, user) {
     const h = await one('SELECT * FROM history WHERE id=$1', [id]);
@@ -411,6 +464,7 @@ const actions = {
     // only hand-written entries, by their author or an admin; automatic entries are the audit trail
     if (AUTO_KINDS.includes(h.kind)) throw new HttpError(400, 'Wpisów automatycznych nie można usuwać');
     if (h.user_id !== user.id && user.role !== 'admin') throw new HttpError(403, 'Możesz usuwać tylko własne wpisy');
+    await purgePhotos('h.id=$1', [id]);
     await q('DELETE FROM history WHERE id=$1', [id]);
     return { ok: true };
   },
@@ -422,7 +476,7 @@ const actions = {
     const site = await one(`${SITE_SELECT} WHERE s.id=$1`, [panel.site_id]);
     const files = await q(`SELECT f.id, f.filename, f.mime, f.size, f.sha256, f.version, f.description, f.created_at, f.uploaded_by, u.name AS uploader_name
       FROM panel_files f LEFT JOIN users u ON u.id=f.uploaded_by WHERE f.panel_id=$1 ORDER BY f.created_at DESC`, [id]);
-    const history = await q(`${HISTORY_SELECT} WHERE h.entity='panel' AND h.entity_id=$1 ORDER BY h.event_date DESC, h.id DESC`, [id]);
+    const history = await attachPhotos(await q(`${HISTORY_SELECT} WHERE h.entity='panel' AND h.entity_id=$1 ORDER BY h.event_date DESC, h.id DESC`, [id]));
     return { panel, site, files, history };
   },
   async 'panels.save'(p, user) {
@@ -559,6 +613,7 @@ const actions = {
   async 'demo.clear'(_, user) {
     requireAdmin(user);
     await purgeFiles('s.client_id IN (SELECT id FROM clients WHERE demo)', []);
+    await purgePhotos('s.client_id IN (SELECT id FROM clients WHERE demo)', []);
     await q('DELETE FROM clients WHERE demo');
     return { ok: true };
   },
