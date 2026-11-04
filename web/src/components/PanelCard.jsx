@@ -13,7 +13,7 @@ export default function PanelCard({ panel: p, siteId, onUnlink }) {
       <span className="w-11 h-11 flex items-center justify-center bg-ink text-white rounded-[3px]"><CircuitBoard size={20} /></span>
       <div className="min-w-0">
         <div className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-muted">{p.name}{p.location ? ` · ${p.location}` : ''}</div>
-        <div className="font-display text-[22px] font-semibold leading-tight">{[p.manufacturer, p.model].filter(Boolean).join(' ') || '—'}</div>
+        <div className="font-display text-[22px] font-semibold leading-tight">{[p.manufacturer, p.model].filter(Boolean).join(' ') || <span className="text-muted text-[15px] font-sans font-normal">Producent i model nieuzupełnione — uzupełnij w karcie centrali</span>}</div>
         <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-[12.5px] text-ink-3 font-mono">
           <span>SN {p.serial || '—'}</span><span>FW {p.firmware || '—'}</span><span>{p.loops ?? '—'} pętli / {p.zones ?? '—'} stref</span>
         </div>

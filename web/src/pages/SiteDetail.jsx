@@ -60,6 +60,9 @@ export default function SiteDetail() {
     try { await api('panels.unlinkSite', { panel_id: p.id, site_id: site.id }); reload(); } catch (e) { alert(e.message); }
   }
   const mainPanel = panels[0];
+  // model from the assigned panel card, else the model noted on the site; the card name is the last resort
+  const join = (...xs) => xs.filter(Boolean).join(' ');
+  const panelModel = (mainPanel && join(mainPanel.manufacturer, mainPanel.model)) || join(site.panel_manufacturer, site.panel_model);
 
   return (
     <>
@@ -78,7 +81,8 @@ export default function SiteDetail() {
         </div>
         <div className="px-4 py-3">
           <div className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-muted">Centrala</div>
-          <button disabled={!data.panels} onClick={() => setParams({ tab: 'centrala' })} className="block max-w-full font-display text-[22px] font-semibold mt-0.5 truncate enabled:hover:text-signal enabled:cursor-pointer">{(mainPanel ? [mainPanel.manufacturer, mainPanel.model] : [site.panel_manufacturer, site.panel_model]).filter(Boolean).join(' ') || '—'}{panels.length > 1 && <span className="text-[14px] text-muted font-sans"> +{panels.length - 1}</span>}</button>
+          <button disabled={!data.panels} onClick={() => setParams({ tab: 'centrala' })} className="block max-w-full font-display text-[22px] font-semibold mt-0.5 truncate enabled:hover:text-signal enabled:cursor-pointer">{panelModel || mainPanel?.name || '—'}{panels.length > 1 && <span className="text-[14px] text-muted font-sans"> +{panels.length - 1}</span>}</button>
+          {mainPanel && panelModel && <div className="text-[12px] text-muted truncate">{mainPanel.name}</div>}
         </div>
         <div className="px-4 py-3">
           <div className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-muted">Elementy</div>
