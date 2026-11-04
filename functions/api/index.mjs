@@ -750,8 +750,10 @@ const actions = {
       if (before && !update) { skipped++; continue; }
       if (before) {
         // keep what was entered by hand when the file has nothing better
+        // notes written by an earlier import are refreshed; notes typed by hand stay
         const patch = { id: before.id, ...fields, model: fields.model || before.model, manufacturer: before.manufacturer || fields.manufacturer,
-          location: fields.location || before.location, notes: before.notes || fields.notes };
+          location: fields.location || before.location,
+          notes: before.notes && !/\(import z (konfiguracji|pliku)\)$/.test(before.notes) ? before.notes : fields.notes || before.notes };
         const row = await save('devices', DEVICE_COLS, patch);
         await logChange('device', before, row, without(DEVICE_COLS, 'site_id'), user);
         updated++;
