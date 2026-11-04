@@ -58,6 +58,7 @@ export function HistoryList({ rows, onChanged, showEntity, onEntity, empty = 'Br
         const Icon = k.icon;
         const deletable = !h.virtual && !AUTO_KINDS.includes(h.kind) && (h.user_id === user.id || user.role === 'admin');
         const alive = h.kind !== 'usunięcie';
+        const changes = (h.changes || []).filter((c) => h.kind !== 'status' || c.field !== 'status'); // status is in the summary
         return (
           <li key={h.virtual ? h.entity + h.entity_id : h.id} className="group ml-5 pb-4 last:pb-0 relative">
             <span className={`absolute -left-[29px] top-0.5 w-[18px] h-[18px] rounded-full flex items-center justify-center text-white ${k.color}`}>
@@ -82,9 +83,9 @@ export function HistoryList({ rows, onChanged, showEntity, onEntity, empty = 'Br
               </div>
             )}
             {h.summary && <div className="text-[13.5px] font-medium">{h.summary}</div>}
-            {h.changes?.length > 0 && h.kind !== 'status' && (
+            {changes.length > 0 && (
               <ul className="mt-0.5 text-[12.5px] text-ink-3">
-                {h.changes.map((c) => (
+                {changes.map((c) => (
                   <li key={c.field}><span className="text-muted">{c.label}:</span> <s className="text-muted decoration-muted/60">{short(c.from)}</s> → <b className="font-medium">{short(c.to)}</b></li>
                 ))}
               </ul>
