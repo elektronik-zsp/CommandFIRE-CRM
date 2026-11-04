@@ -4,6 +4,7 @@ import { Gauge, Building2, MapPin, ClipboardCheck, Siren, Users as UsersIcon, Lo
 import { useAuth } from './auth';
 import { api } from './api';
 import { FormModal } from './ui';
+import { useReloadOnNewVersion } from './version';
 
 const NAV = [
   { to: '/', label: 'Pulpit', icon: Gauge, end: true },
@@ -36,6 +37,7 @@ export default function Layout() {
   const [pw, setPw] = useState(false);
   const [open, setOpen] = useState(false);
   const loc = useLocation();
+  useReloadOnNewVersion(loc.pathname);
 
   const sidebar = (
     <aside className="flex flex-col h-full bg-ink text-white w-64">
