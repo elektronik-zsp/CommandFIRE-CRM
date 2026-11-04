@@ -106,11 +106,11 @@ export const ticketFields = (sites, users) => [
   { name: 'resolution', label: 'Sposób usunięcia / wykonane prace', type: 'textarea', span: 2 },
 ];
 
-export const userFields = (isNew) => [
+export const userFields = (isNew, roles = []) => [
   { name: 'name', label: 'Imię i nazwisko', required: true, span: 2 },
   { name: 'email', label: 'E-mail (login)', type: 'email', required: true },
   { name: 'phone', label: 'Telefon', type: 'tel' },
-  { name: 'role', label: 'Rola', type: 'select', required: true, options: [{ value: 'technik', label: 'Technik' }, { value: 'admin', label: 'Administrator' }] },
+  { name: 'role', label: 'Rola', type: 'select', required: true, options: roles.map((r) => ({ value: r.key, label: r.name })) },
   { name: 'active', label: 'Konto', type: 'checkbox', checkLabel: 'Aktywne' },
   { name: 'password', label: isNew ? 'Hasło' : 'Nowe hasło', type: 'password', required: isNew, span: 2, hint: isNew ? 'Min. 8 znaków' : 'Zostaw puste, aby nie zmieniać' },
 ];

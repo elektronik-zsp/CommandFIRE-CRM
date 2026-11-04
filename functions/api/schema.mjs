@@ -5,6 +5,17 @@ CREATE TABLE IF NOT EXISTS app_settings (
   value text NOT NULL
 );
 
+-- Roles with their permission set (see permissions.mjs); users.role → roles.key
+CREATE TABLE IF NOT EXISTS roles (
+  key TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT,
+  permissions TEXT[] NOT NULL DEFAULT '{}',
+  system BOOLEAN NOT NULL DEFAULT false,
+  sort INT NOT NULL DEFAULT 100,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS users (
   id SERIAL PRIMARY KEY,
   email TEXT UNIQUE NOT NULL,

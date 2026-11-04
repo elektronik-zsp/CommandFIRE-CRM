@@ -45,7 +45,7 @@ const when = (h) => (h.created_at?.slice(0, 10) === h.event_date ? fmtDateTime(h
 
 /** Timeline of history entries. `showEntity` adds the subject (used in the site's operating log). */
 export function HistoryList({ rows, onChanged, showEntity, onEntity, empty = 'Brak wpisów w historii' }) {
-  const { user } = useAuth();
+  const { user, can } = useAuth();
   const [viewer, setViewer] = useState(null); // { photos, index }
   if (!rows?.length) return <Empty>{empty}</Empty>;
 
@@ -60,7 +60,7 @@ export function HistoryList({ rows, onChanged, showEntity, onEntity, empty = 'Br
       {rows.map((h) => {
         const k = KIND[h.kind] || KIND.notatka;
         const Icon = k.icon;
-        const deletable = !h.virtual && !AUTO_KINDS.includes(h.kind) && (h.user_id === user.id || user.role === 'admin');
+        const deletable = !h.virtual && !AUTO_KINDS.includes(h.kind) && (h.user_id === user.id ? can('history.add') : can('history.delete'));
         const alive = h.kind !== 'usunięcie';
         const changes = (h.changes || []).filter((c) => h.kind !== 'status' || c.field !== 'status'); // status is in the summary
         return (

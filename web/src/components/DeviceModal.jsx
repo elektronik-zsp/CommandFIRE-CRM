@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { api } from '../api';
+import { useAuth } from '../auth';
 import { useApi, Modal, RecordForm, Tabs, Spinner, Field, Input } from '../ui';
 import { deviceFields, clean } from '../forms';
 import { DEVICE_EVENT_KINDS } from '../format';
@@ -7,15 +8,16 @@ import { HistoryList, AddEntry } from './History';
 
 // Create / edit a system element; existing elements also get their service history.
 export default function DeviceModal({ device, onClose, onSaved, initialTab = 'dane' }) {
+  const { can } = useAuth();
   const [tab, setTab] = useState(initialTab);
   const [current, setCurrent] = useState(device);
   const history = useApi('history.list', { entity: 'device', entity_id: device.id || 0 });
   const isNew = !device.id;
 
   const form = (
-    <RecordForm key={JSON.stringify(current)} fields={deviceFields} initial={current} onClose={onClose}
+    <RecordForm key={JSON.stringify(current)} readOnly={!can('devices.edit')} fields={deviceFields} initial={current} onClose={onClose}
       onSubmit={async (v) => { await api('devices.save', clean(v)); onSaved?.(); }}
-      onDelete={isNew ? undefined : async () => { await api('devices.delete', { id: device.id }); onSaved?.(); }} />
+      onDelete={isNew || !can('devices.delete') ? undefined : async () => { await api('devices.delete', { id: device.id }); onSaved?.(); }} />
   );
 
   return (
@@ -29,7 +31,7 @@ export default function DeviceModal({ device, onClose, onSaved, initialTab = 'da
           {tab === 'dane' && form}
           {tab === 'historia' && (
             <div className="flex flex-col gap-4">
-              <AddEntry photos kinds={DEVICE_EVENT_KINDS} placeholder="Co zostało zrobione / stwierdzone…"
+              {can('history.add') && <AddEntry photos kinds={DEVICE_EVENT_KINDS} placeholder="Co zostało zrobione / stwierdzone…"
                 extras={(kind, v, set) => kind === 'wymiana' && (
                   <div className="grid sm:grid-cols-2 gap-2.5">
                     <Field label="Nowy nr seryjny"><Input value={v.serial || ''} onChange={(e) => set('serial', e.target.value)} placeholder="opcjonalnie" /></Field>
@@ -43,7 +45,7 @@ export default function DeviceModal({ device, onClose, onSaved, initialTab = 'da
                   });
                   setCurrent(r.device);
                   history.reload(); onSaved?.();
-                }} />
+                }} />}
               {history.data ? <HistoryList rows={history.data} onChanged={history.reload} /> : <Spinner />}
             </div>
           )}

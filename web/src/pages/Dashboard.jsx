@@ -40,7 +40,7 @@ function MonthBars({ title, rows, field, color }) {
 }
 
 export default function Dashboard() {
-  const { user } = useAuth();
+  const { can } = useAuth();
   const nav = useNavigate();
   const { data, error, loading, reload } = useApi('dashboard');
   const [busy, setBusy] = useState(false);
@@ -48,7 +48,7 @@ export default function Dashboard() {
   if (loading && !data) return <Spinner />;
   if (error) return <ErrorBox>{error}</ErrorBox>;
   const { counts, sites, noSchedule, tickets, replacements, contracts, perMonth, demo } = data;
-  const overdue = sites.filter((s) => daysUntil(s.next_due) < 0).length;
+  const overdue = (sites || []).filter((s) => daysUntil(s.next_due) < 0).length;
 
   async function demoAction(action) {
     if (action === 'demo.clear' && !confirm('Usunąć wszystkie dane demonstracyjne (klientów, obiekty, przeglądy, zgłoszenia)?')) return;
@@ -61,8 +61,8 @@ export default function Dashboard() {
   return (
     <>
       <PageHeader kicker={today} title="Pulpit">
-        {user.role === 'admin' && demo && <Button variant="ghost" icon={Trash2} loading={busy} onClick={() => demoAction('demo.clear')}>Usuń dane demo</Button>}
-        <Button variant="dark" icon={Plus} onClick={() => nav('/zgloszenia?nowe=1')}>Nowe zgłoszenie</Button>
+        {can('demo.manage') && demo && <Button variant="ghost" icon={Trash2} loading={busy} onClick={() => demoAction('demo.clear')}>Usuń dane demo</Button>}
+        {can('tickets.create') && <Button variant="dark" icon={Plus} onClick={() => nav('/zgloszenia?nowe=1')}>Nowe zgłoszenie</Button>}
       </PageHeader>
 
       {counts.clients === 0 && (
@@ -72,8 +72,8 @@ export default function Dashboard() {
             <p className="text-muted text-[13px]">Dodaj pierwszego klienta lub wczytaj przykładowe dane, aby zobaczyć, jak działa system.</p>
           </div>
           <div className="flex gap-2">
-            {user.role === 'admin' && <Button variant="ghost" icon={Database} loading={busy} onClick={() => demoAction('demo.seed')}>Wczytaj dane demo</Button>}
-            <Button icon={Plus} onClick={() => nav('/klienci?nowy=1')}>Dodaj klienta</Button>
+            {can('demo.manage') && <Button variant="ghost" icon={Database} loading={busy} onClick={() => demoAction('demo.seed')}>Wczytaj dane demo</Button>}
+            {can('clients.edit') && <Button icon={Plus} onClick={() => nav('/klienci?nowy=1')}>Dodaj klienta</Button>}
           </div>
         </div>
       )}
@@ -87,7 +87,7 @@ export default function Dashboard() {
       </div>
 
       <div className="grid xl:grid-cols-[1.45fr_1fr] gap-4 mb-4">
-        <Card title="Terminy przeglądów — 30 dni" pad={false} actions={<Link to="/przeglady" className="text-[12px] text-muted hover:text-ink">Harmonogram →</Link>}>
+        {sites && <Card title="Terminy przeglądów — 30 dni" pad={false} actions={<Link to="/przeglady" className="text-[12px] text-muted hover:text-ink">Harmonogram →</Link>}>
           <Table
             rows={sites}
             empty="Brak przeglądów w najbliższych 30 dniach"
@@ -101,9 +101,9 @@ export default function Dashboard() {
               { key: 'panel', label: 'Centrala', className: 'hidden md:table-cell', render: (s) => <span className="text-[12.5px]">{[s.panel_manufacturer, s.panel_model].filter(Boolean).join(' ') || '—'}</span> },
             ]}
           />
-        </Card>
+        </Card>}
 
-        <Card title="Otwarte zgłoszenia" pad={false} actions={<Link to="/zgloszenia" className="text-[12px] text-muted hover:text-ink">Wszystkie →</Link>}>
+        {tickets && <Card title="Otwarte zgłoszenia" pad={false} actions={<Link to="/zgloszenia" className="text-[12px] text-muted hover:text-ink">Wszystkie →</Link>}>
           {tickets.length === 0 ? <Empty>Brak otwartych zgłoszeń</Empty> : (
             <ul>
               {tickets.map((t) => (
@@ -120,11 +120,11 @@ export default function Dashboard() {
               ))}
             </ul>
           )}
-        </Card>
+        </Card>}
       </div>
 
       <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4 mb-4">
-        <Card title={<span className="flex items-center gap-2"><Battery size={16} />Wymiany elementów — 90 dni</span>} pad={false}>
+        {replacements && <Card title={<span className="flex items-center gap-2"><Battery size={16} />Wymiany elementów — 90 dni</span>} pad={false}>
           {replacements.length === 0 ? <Empty>Brak zaplanowanych wymian</Empty> : (
             <ul>{replacements.map((d) => {
               const n = daysUntil(d.replace_by);
@@ -136,8 +136,8 @@ export default function Dashboard() {
               );
             })}</ul>
           )}
-        </Card>
-        <Card title={<span className="flex items-center gap-2"><FileWarning size={16} />Kończące się umowy — 60 dni</span>} pad={false}>
+        </Card>}
+        {contracts && <Card title={<span className="flex items-center gap-2"><FileWarning size={16} />Kończące się umowy — 60 dni</span>} pad={false}>
           {contracts.length === 0 ? <Empty>Brak umów do odnowienia</Empty> : (
             <ul>{contracts.map((s) => {
               const n = daysUntil(s.contract_end);
@@ -149,7 +149,7 @@ export default function Dashboard() {
               );
             })}</ul>
           )}
-        </Card>
+        </Card>}
         <Card title={<span className="flex items-center gap-2"><CalendarClock size={16} />Aktywność</span>} className="md:col-span-2 xl:col-span-1">
           <div className="flex flex-col gap-6">
             <MonthBars title="Wykonane przeglądy" rows={perMonth} field="done" color="var(--color-ink)" />
@@ -158,7 +158,7 @@ export default function Dashboard() {
         </Card>
       </div>
 
-      {noSchedule.length > 0 && (
+      {noSchedule?.length > 0 && (
         <Card title="Obiekty bez harmonogramu przeglądów" pad={false}>
           <Table rows={noSchedule} onRow={(s) => nav(`/obiekty/${s.id}`)} columns={[
             { key: 'name', label: 'Obiekt', render: (s) => <span className="font-medium">{s.name}</span> },

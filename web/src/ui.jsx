@@ -10,6 +10,7 @@ export function useApi(action, params, deps = []) {
   const [loading, setLoading] = useState(true);
   const key = JSON.stringify(params || {});
   const reload = useCallback(() => {
+    if (!action) { setLoading(false); return Promise.resolve(); } // permission-gated: skip the call
     setLoading(true);
     return api(action, params)
       .then((d) => { setData(d); setError(null); })
@@ -180,7 +181,8 @@ export function FormModal({ title, onClose, wide, ...props }) {
 }
 
 // The form body of FormModal, usable inside other layouts (e.g. a tabbed modal).
-export function RecordForm({ fields, initial = {}, onSubmit, onClose, onDelete, submitLabel = 'Zapisz' }) {
+// readOnly: show the values without the ability to save (role without edit permission)
+export function RecordForm({ fields, initial = {}, onSubmit, onClose, onDelete, submitLabel = 'Zapisz', readOnly }) {
   const [values, setValues] = useState(initial);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
@@ -201,7 +203,8 @@ export function RecordForm({ fields, initial = {}, onSubmit, onClose, onDelete, 
 
   return (
     <form onSubmit={submit} className="flex flex-col gap-5">
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3.5">
+      {readOnly && <div className="text-[12.5px] text-muted bg-paper-2 px-3 py-2 rounded-[3px]">Tylko podgląd — Twoja rola nie ma uprawnień do edycji.</div>}
+      <fieldset disabled={readOnly} className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3.5 min-w-0 disabled:[&_input]:bg-paper/50 disabled:[&_select]:bg-paper/50 disabled:[&_textarea]:bg-paper/50">
         {fields.map((f) => {
           if (f.section) return <div key={f.section} className="sm:col-span-2 pt-2 mt-1 border-t border-line font-display uppercase tracking-wider text-[13px] text-ink-3">{f.section}</div>;
           const v = values[f.name] ?? '';
@@ -237,13 +240,13 @@ export function RecordForm({ fields, initial = {}, onSubmit, onClose, onDelete, 
             </Field>
           );
         })}
-      </div>
+      </fieldset>
       {error && <ErrorBox>{error}</ErrorBox>}
       <div className="flex items-center justify-between gap-2 pt-1">
         <div>{onDelete && <Button type="button" variant="danger" onClick={remove} disabled={busy}>Usuń</Button>}</div>
         <div className="flex gap-2">
-          <Button type="button" variant="ghost" onClick={onClose}>Anuluj</Button>
-          <Button type="submit" loading={busy}>{submitLabel}</Button>
+          <Button type="button" variant="ghost" onClick={onClose}>{readOnly ? 'Zamknij' : 'Anuluj'}</Button>
+          {!readOnly && <Button type="submit" loading={busy}>{submitLabel}</Button>}
         </div>
       </div>
     </form>

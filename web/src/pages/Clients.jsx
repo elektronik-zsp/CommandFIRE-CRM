@@ -2,15 +2,17 @@ import { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Plus, Search } from 'lucide-react';
 import { api } from '../api';
+import { useAuth } from '../auth';
 import { useApi, Card, Table, PageHeader, Button, Input, FormModal, ErrorBox, Badge } from '../ui';
 import { clientFields } from '../forms';
 
 export default function Clients() {
+  const { can } = useAuth();
   const nav = useNavigate();
   const [params, setParams] = useSearchParams();
   const [search, setSearch] = useState('');
   const { data, error, reload } = useApi('clients.list', { search: search.trim() || undefined });
-  const creating = params.get('nowy') === '1';
+  const creating = params.get('nowy') === '1' && can('clients.edit');
 
   return (
     <>
@@ -19,7 +21,7 @@ export default function Clients() {
           <Search size={15} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
           <Input placeholder="Szukaj: nazwa, NIP, miasto…" value={search} onChange={(e) => setSearch(e.target.value)} className="pl-8 w-64" />
         </div>
-        <Button icon={Plus} onClick={() => setParams({ nowy: '1' })}>Nowy klient</Button>
+        {can('clients.edit') && <Button icon={Plus} onClick={() => setParams({ nowy: '1' })}>Nowy klient</Button>}
       </PageHeader>
       {error && <ErrorBox>{error}</ErrorBox>}
       <Card pad={false} className="reveal">

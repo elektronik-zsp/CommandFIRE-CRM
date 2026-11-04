@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ChevronLeft, ChevronRight, CalendarPlus, AlertTriangle } from 'lucide-react';
+import { useAuth } from '../auth';
 import { useApi, Card, Table, PageHeader, Button, Select, ErrorBox, Badge, Empty } from '../ui';
 import { fmtDate, daysUntil, relDays, todayISO, MONTHS, INSPECTION_STATUSES } from '../format';
 import ScheduleModal from '../components/ScheduleModal';
@@ -8,6 +9,7 @@ import ScheduleModal from '../components/ScheduleModal';
 const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
 export default function Inspections() {
+  const { can } = useAuth();
   const nav = useNavigate();
   const [cursor, setCursor] = useState(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); });
   const [status, setStatus] = useState('');
@@ -39,7 +41,7 @@ export default function Inspections() {
         <Select value={tech} onChange={(e) => setTech(e.target.value)} placeholder="Wszyscy technicy" className="w-44"
           options={(users.data || []).map((u) => ({ value: String(u.id), label: u.name }))} />
         <Select value={status} onChange={(e) => setStatus(e.target.value)} options={INSPECTION_STATUSES} placeholder="Każdy status" className="w-40" />
-        <Button icon={CalendarPlus} onClick={() => setCreating(true)}>Zaplanuj przegląd</Button>
+        {can('inspections.edit') && <Button icon={CalendarPlus} onClick={() => setCreating(true)}>Zaplanuj przegląd</Button>}
       </PageHeader>
 
       {overdue.data?.length > 0 && (

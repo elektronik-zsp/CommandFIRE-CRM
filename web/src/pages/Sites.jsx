@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, Search, Radio } from 'lucide-react';
 import { api } from '../api';
+import { useAuth } from '../auth';
 import { useApi, Card, Table, PageHeader, Button, Input, Select, FormModal, ErrorBox, Badge } from '../ui';
 import { siteFields, clean, toForm } from '../forms';
 import { fmtDate, daysUntil, relDays, dueTone } from '../format';
@@ -14,12 +15,13 @@ const FILTERS = [
 ];
 
 export default function Sites() {
+  const { can } = useAuth();
   const nav = useNavigate();
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState('');
   const [creating, setCreating] = useState(false);
   const { data, error } = useApi('sites.list', { search: search.trim() || undefined });
-  const clients = useApi('clients.list', {}, [creating]);
+  const clients = useApi(can('sites.edit') && 'clients.list', {}, [creating]);
 
   const rows = (data || []).filter((s) => {
     const n = daysUntil(s.next_due);
@@ -38,7 +40,7 @@ export default function Sites() {
           <Search size={15} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
           <Input placeholder="Szukaj obiektu, adresu, centrali…" value={search} onChange={(e) => setSearch(e.target.value)} className="pl-8 w-64" />
         </div>
-        <Button icon={Plus} onClick={() => setCreating(true)}>Nowy obiekt</Button>
+        {can('sites.edit') && <Button icon={Plus} onClick={() => setCreating(true)}>Nowy obiekt</Button>}
       </PageHeader>
       {error && <ErrorBox>{error}</ErrorBox>}
       <Card pad={false} className="reveal">

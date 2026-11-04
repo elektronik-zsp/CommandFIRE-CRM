@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useParams, Link } from 'react-router-dom';
 import { ArrowLeft, Save, CheckCircle2, Printer, Trash2, Check, X, Minus } from 'lucide-react';
 import { api } from '../api';
+import { useAuth } from '../auth';
 import { useApi, Card, PageHeader, Button, Spinner, ErrorBox, Field, Input, Select, Badge, KV } from '../ui';
 import { fmtDate, todayISO, INSPECTION_TYPES, INSPECTION_RESULTS } from '../format';
 
@@ -16,6 +17,8 @@ const TEXTAREA = 'w-full px-2.5 py-2 bg-white border border-line rounded-[3px] t
 export default function InspectionDetail() {
   const { id } = useParams();
   const nav = useNavigate();
+  const { can } = useAuth();
+  const editable = can('inspections.edit');
   const { data, error, reload } = useApi('inspections.get', { id: Number(id) });
   const users = useApi('users.list', {});
   const [form, setForm] = useState(null);
@@ -69,11 +72,13 @@ export default function InspectionDetail() {
         <PageHeader kicker={`${form.type} · ${client.name}`} title={`Protokół przeglądu${form.protocol_number ? ' ' + form.protocol_number : ''}`}>
           <Badge>{form.status}</Badge>
           <Button variant="ghost" icon={Printer} onClick={() => window.print()}>Drukuj / PDF</Button>
-          <Button variant="dark" icon={Save} loading={busy === 'save'} onClick={() => run('save')}>Zapisz</Button>
-          {!done && <Button icon={CheckCircle2} loading={busy === 'complete'} onClick={() => run('complete')}>Zamknij przegląd</Button>}
+          {editable && <Button variant="dark" icon={Save} loading={busy === 'save'} onClick={() => run('save')}>Zapisz</Button>}
+          {!done && can('inspections.complete') && <Button icon={CheckCircle2} loading={busy === 'complete'} onClick={() => run('complete')}>Zamknij przegląd</Button>}
         </PageHeader>
         {msg && <div className={`mb-4 p-3 rounded-[3px] border text-[13px] ${msg.ok ? 'border-ok/40 bg-ok/5 text-ok' : 'border-signal/40 bg-signal/5 text-signal-dark'}`}>{msg.text}</div>}
 
+        {!editable && <div className="mb-4 p-3 rounded-[3px] border border-line bg-paper/60 text-[13px] text-muted">Tylko podgląd — Twoja rola nie ma uprawnień do edycji przeglądów.</div>}
+        <fieldset disabled={!editable} className="min-w-0">
         <div className="grid lg:grid-cols-[1fr_340px] gap-4">
           <div className="flex flex-col gap-4 min-w-0">
             <Card title="Lista kontrolna" actions={<span className="font-mono text-[11.5px] text-muted">{filled}/{form.checklist.length} · usterki: <b className={faults ? 'text-signal' : ''}>{faults}</b></span>} pad={false}>
@@ -135,14 +140,15 @@ export default function InspectionDetail() {
                 ['Kontakt', [site.on_site_contact, site.on_site_phone].filter(Boolean).join(', ')],
               ]} />
             </Card>
-            {form.status === 'zaplanowany' && (
+            {form.status === 'zaplanowany' && (editable || can('inspections.delete')) && (
               <div className="flex gap-2">
-                <Button variant="ghost" className="flex-1" loading={busy === 'cancel'} onClick={() => run('cancel')}>Odwołaj</Button>
-                <Button variant="danger" icon={Trash2} loading={busy === 'delete'} onClick={() => run('delete')}>Usuń</Button>
+                {editable && <Button variant="ghost" className="flex-1" loading={busy === 'cancel'} onClick={() => run('cancel')}>Odwołaj</Button>}
+                {can('inspections.delete') && <Button variant="danger" icon={Trash2} loading={busy === 'delete'} onClick={() => run('delete')}>Usuń</Button>}
               </div>
             )}
           </div>
         </div>
+        </fieldset>
       </div>
 
       {/* ---------- printable protocol ---------- */}

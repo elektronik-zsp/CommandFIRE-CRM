@@ -7,10 +7,10 @@ import { FormModal } from './ui';
 
 const NAV = [
   { to: '/', label: 'Pulpit', icon: Gauge, end: true },
-  { to: '/zgloszenia', label: 'Zgłoszenia serwisowe', icon: Siren },
-  { to: '/przeglady', label: 'Przeglądy', icon: ClipboardCheck },
-  { to: '/obiekty', label: 'Obiekty', icon: MapPin },
-  { to: '/klienci', label: 'Klienci', icon: Building2 },
+  { to: '/zgloszenia', label: 'Zgłoszenia serwisowe', icon: Siren, perm: 'tickets.view' },
+  { to: '/przeglady', label: 'Przeglądy', icon: ClipboardCheck, perm: 'inspections.view' },
+  { to: '/obiekty', label: 'Obiekty', icon: MapPin, perm: 'sites.view' },
+  { to: '/klienci', label: 'Klienci', icon: Building2, perm: 'clients.view' },
   { to: '/uzytkownicy', label: 'Zespół', icon: UsersIcon },
 ];
 
@@ -32,7 +32,7 @@ export function Logo({ light }) {
 }
 
 export default function Layout() {
-  const { user, logout } = useAuth();
+  const { user, logout, can } = useAuth();
   const [pw, setPw] = useState(false);
   const [open, setOpen] = useState(false);
   const loc = useLocation();
@@ -44,7 +44,7 @@ export default function Layout() {
         <button className="lg:hidden text-white/60 cursor-pointer" onClick={() => setOpen(false)}><X size={18} /></button>
       </div>
       <nav className="flex-1 py-4 px-3 flex flex-col gap-0.5">
-        {NAV.map(({ to, label, icon: Icon, end }) => (
+        {NAV.filter((n) => !n.perm || can(n.perm)).map(({ to, label, icon: Icon, end }) => (
           <NavLink key={to} to={to} end={end} onClick={() => setOpen(false)}
             className={({ isActive }) => `group relative flex items-center gap-3 h-10 px-3 rounded-[3px] text-[13.5px] transition-colors ${isActive ? 'bg-white/10 text-white' : 'text-white/60 hover:text-white hover:bg-white/5'}`}>
             {({ isActive }) => (<>
@@ -56,7 +56,7 @@ export default function Layout() {
       </nav>
       <div className="p-4 border-t border-white/10">
         <div className="text-[13px] font-medium truncate">{user.name}</div>
-        <div className="font-mono text-[10.5px] text-white/45 truncate mb-3">{user.email} · {user.role}</div>
+        <div className="font-mono text-[10.5px] text-white/45 truncate mb-3">{user.email} · {user.role_name || user.role}</div>
         <div className="flex gap-1">
           <button onClick={() => setPw(true)} className="flex-1 flex items-center justify-center gap-1.5 h-8 text-[12px] text-white/70 hover:text-white bg-white/5 hover:bg-white/10 rounded-[3px] cursor-pointer"><KeyRound size={13} />Hasło</button>
           <button onClick={logout} className="flex-1 flex items-center justify-center gap-1.5 h-8 text-[12px] text-white/70 hover:text-white bg-white/5 hover:bg-white/10 rounded-[3px] cursor-pointer"><LogOut size={13} />Wyloguj</button>

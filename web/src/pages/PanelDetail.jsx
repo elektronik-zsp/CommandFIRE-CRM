@@ -20,7 +20,7 @@ const readBase64 = (file) => new Promise((resolve, reject) => {
 export default function PanelDetail() {
   const { id } = useParams();
   const nav = useNavigate();
-  const { user } = useAuth();
+  const { user, can } = useAuth();
   const { data, error, reload } = useApi('panels.get', { id: Number(id) });
   const [editing, setEditing] = useState(false);
 
@@ -34,7 +34,7 @@ export default function PanelDetail() {
       <PageHeader kicker={`Karta centrali · ${client.name}`} title={[panel.manufacturer, panel.model].filter(Boolean).join(' ') || panel.name}>
         <span className="no-print flex gap-2">
           <Button variant="ghost" icon={Printer} onClick={() => window.print()}>Drukuj kartę</Button>
-          <Button variant="dark" icon={Pencil} onClick={() => setEditing(true)}>Edytuj</Button>
+          {can('panels.edit') && <Button variant="dark" icon={Pencil} onClick={() => setEditing(true)}>Edytuj</Button>}
         </span>
       </PageHeader>
 
@@ -62,7 +62,7 @@ export default function PanelDetail() {
                 ['Akumulatory', panel.batteries],
               ]} />
               <Group title="Serwis" items={[
-                ['Dostęp', panel.service_access && <span className="whitespace-pre-wrap">{panel.service_access}</span>],
+                ...(can('panels.access') ? [['Dostęp', panel.service_access && <span className="whitespace-pre-wrap">{panel.service_access}</span>]] : []),
                 ['Uwagi', panel.notes && <span className="whitespace-pre-wrap">{panel.notes}</span>],
               ]} />
             </div>
@@ -73,7 +73,7 @@ export default function PanelDetail() {
             {sites.length === 0 ? (
               <Empty icon={Building2}>
                 <span>Centrala nie jest przypisana do żadnego obiektu.</span>
-                <Button variant="ghost" icon={Pencil} className="mt-2 no-print" onClick={() => setEditing(true)}>Wybierz obiekty</Button>
+                {can('panels.edit') && <Button variant="ghost" icon={Pencil} className="mt-2 no-print" onClick={() => setEditing(true)}>Wybierz obiekty</Button>}
               </Empty>
             ) : (
               <ul>
@@ -99,15 +99,15 @@ export default function PanelDetail() {
             )}
           </Card>
 
-          <ConfigFiles panel={panel} files={files} user={user} onChanged={reload} />
+          {(can('configs.download') || can('configs.upload')) && <ConfigFiles panel={panel} files={files} user={user} can={can} onChanged={reload} />}
         </div>
 
         <Card title="Historia centrali" className="reveal">
           <div className="flex flex-col gap-4">
-            <div className="no-print">
+            {can('history.add') && <div className="no-print">
               <AddEntry kinds={PANEL_EVENT_KINDS} placeholder="Np. zmiana opisów stref, aktualizacja do v5.2, wymiana płyty…"
                 onSubmit={async (v) => { await api('history.add', { entity: 'panel', entity_id: panel.id, ...v }); reload(); }} />
-            </div>
+            </div>}
             <HistoryList rows={history} onChanged={reload} />
           </div>
         </Card>
@@ -115,7 +115,7 @@ export default function PanelDetail() {
 
       {editing && (
         <PanelModal panel={{ ...panel, sites }} sites={clientSites} onClose={() => setEditing(false)} onSaved={reload}
-          onDelete={user.role === 'admin' ? async () => { await api('panels.delete', { id: panel.id }); nav(`/klienci/${client.id}`); } : undefined} />
+          onDelete={can('panels.delete') ? async () => { await api('panels.delete', { id: panel.id }); nav(`/klienci/${client.id}`); } : undefined} />
       )}
     </>
   );
@@ -130,7 +130,7 @@ function Group({ title, items }) {
   );
 }
 
-function ConfigFiles({ panel, files, user, onChanged }) {
+function ConfigFiles({ panel, files, user, can, onChanged }) {
   const input = useRef(null);
   const [file, setFile] = useState(null);
   const [meta, setMeta] = useState({ version: '', description: '' });
@@ -170,7 +170,7 @@ function ConfigFiles({ panel, files, user, onChanged }) {
   return (
     <Card title={<span className="flex items-center gap-2"><FileCode2 size={16} />Pliki konfiguracji</span>} pad={false} className="reveal"
       actions={<span className="font-mono text-[11.5px] text-muted">{files.length} {files.length === 1 ? 'wersja' : 'wersji'}</span>}>
-      <div className="no-print p-4 border-b border-line">
+      {can('configs.upload') && <div className="no-print p-4 border-b border-line">
         {!file ? (
           <button type="button" onClick={() => input.current.click()}
             onDragOver={(e) => { e.preventDefault(); setDrag(true); }} onDragLeave={() => setDrag(false)}
@@ -195,7 +195,7 @@ function ConfigFiles({ panel, files, user, onChanged }) {
         )}
         <input ref={input} type="file" className="hidden" onChange={(e) => pick(e.target.files[0])} />
         {msg && <div className={`mt-3 text-[13px] ${msg.ok ? 'text-ok' : 'text-signal'}`}>{msg.text}</div>}
-      </div>
+      </div>}
 
       {files.length === 0 ? <Empty icon={FileCode2}>Brak zapisanej konfiguracji tej centrali</Empty> : (
         <ul>
@@ -212,8 +212,8 @@ function ConfigFiles({ panel, files, user, onChanged }) {
                 <div className="font-mono text-[11px] text-muted">{fmtDateTime(f.created_at)} · {f.uploader_name || '—'} · {fmtSize(f.size)} · sha256 {f.sha256?.slice(0, 10)}</div>
               </div>
               <div className="no-print flex gap-1 shrink-0">
-                <Button variant="ghost" icon={Download} onClick={() => download(f)} title="Pobierz">Pobierz</Button>
-                {(f.uploaded_by === user.id || user.role === 'admin') && (
+                {can('configs.download') && <Button variant="ghost" icon={Download} onClick={() => download(f)} title="Pobierz">Pobierz</Button>}
+                {(f.uploaded_by === user.id ? can('configs.upload') : can('configs.delete')) && (
                   <button onClick={() => remove(f)} className="w-9 h-9 flex items-center justify-center text-muted hover:text-signal cursor-pointer" aria-label="Usuń plik"><Trash2 size={15} /></button>
                 )}
               </div>

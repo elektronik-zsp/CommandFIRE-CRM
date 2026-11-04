@@ -18,16 +18,19 @@ const INTERVAL = { 1: 'co miesiąc', 3: 'co kwartał', 6: 'co pół roku', 12: '
 export default function SiteDetail() {
   const { id } = useParams();
   const nav = useNavigate();
-  const { user } = useAuth();
+  const { can } = useAuth();
   const [params, setParams] = useSearchParams();
   const tab = params.get('tab') || 'info';
   const { data, error, reload } = useApi('sites.get', { id: Number(id) });
-  const clients = useApi('clients.list', {});
+  const clients = useApi(can('sites.edit') && 'clients.list', {});
   const [modal, setModal] = useState(null); // 'edit' | 'schedule' | 'panel' | {device} | {ticket}
 
   if (error) return <ErrorBox>{error}</ErrorBox>;
   if (!data) return <Spinner />;
-  const { site, devices, inspections, tickets, panels, clientPanels, clientSites, history } = data;
+  const { site, devices, clientSites, history } = data;
+  // sections the role may not see come back as null
+  const inspections = data.inspections || [], tickets = data.tickets || [];
+  const panels = data.panels || [], clientPanels = data.clientPanels || [];
   const n = daysUntil(site.next_due);
   const totalElements = devices.reduce((a, d) => a + (d.quantity || 1), 0);
   const byType = Object.entries(devices.reduce((acc, d) => ({ ...acc, [d.type]: (acc[d.type] || 0) + (d.quantity || 1) }), {})).sort((a, b) => b[1] - a[1]);
@@ -62,9 +65,9 @@ export default function SiteDetail() {
     <>
       <Link to={`/klienci/${site.client_id}`} className="inline-flex items-center gap-1 text-[12px] text-muted hover:text-ink mb-3"><ArrowLeft size={13} />{site.client_name}</Link>
       <PageHeader kicker={[site.address, site.city].filter(Boolean).join(', ') || 'Obiekt'} title={site.name}>
-        <Button variant="ghost" icon={Pencil} onClick={() => setModal('edit')}>Edytuj</Button>
-        <Button variant="ghost" icon={Siren} onClick={() => setModal({ ticket: { site_id: site.id } })}>Zgłoszenie</Button>
-        <Button icon={CalendarPlus} onClick={() => setModal('schedule')}>Zaplanuj przegląd</Button>
+        {can('sites.edit') && <Button variant="ghost" icon={Pencil} onClick={() => setModal('edit')}>Edytuj</Button>}
+        {can('tickets.create') && <Button variant="ghost" icon={Siren} onClick={() => setModal({ ticket: { site_id: site.id } })}>Zgłoszenie</Button>}
+        {can('inspections.edit') && <Button icon={CalendarPlus} onClick={() => setModal('schedule')}>Zaplanuj przegląd</Button>}
       </PageHeader>
 
       {/* status strip */}
@@ -75,7 +78,7 @@ export default function SiteDetail() {
         </div>
         <div className="px-4 py-3">
           <div className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-muted">Centrala</div>
-          <button onClick={() => setParams({ tab: 'centrala' })} className="block max-w-full font-display text-[22px] font-semibold mt-0.5 truncate hover:text-signal cursor-pointer">{(mainPanel ? [mainPanel.manufacturer, mainPanel.model] : [site.panel_manufacturer, site.panel_model]).filter(Boolean).join(' ') || '—'}{panels.length > 1 && <span className="text-[14px] text-muted font-sans"> +{panels.length - 1}</span>}</button>
+          <button disabled={!data.panels} onClick={() => setParams({ tab: 'centrala' })} className="block max-w-full font-display text-[22px] font-semibold mt-0.5 truncate enabled:hover:text-signal enabled:cursor-pointer">{(mainPanel ? [mainPanel.manufacturer, mainPanel.model] : [site.panel_manufacturer, site.panel_model]).filter(Boolean).join(' ') || '—'}{panels.length > 1 && <span className="text-[14px] text-muted font-sans"> +{panels.length - 1}</span>}</button>
         </div>
         <div className="px-4 py-3">
           <div className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-muted">Elementy</div>
@@ -89,12 +92,12 @@ export default function SiteDetail() {
 
       <Tabs value={tab} onChange={(t) => setParams({ tab: t })} tabs={[
         { key: 'info', label: 'Informacje' },
-        { key: 'centrala', label: 'Karta centrali', count: panels.length },
+        data.panels && { key: 'centrala', label: 'Karta centrali', count: panels.length },
         { key: 'urzadzenia', label: 'Elementy systemu', count: devices.length },
-        { key: 'przeglady', label: 'Przeglądy', count: inspections.length },
-        { key: 'zgloszenia', label: 'Zgłoszenia', count: tickets.length },
+        data.inspections && { key: 'przeglady', label: 'Przeglądy', count: inspections.length },
+        data.tickets && { key: 'zgloszenia', label: 'Zgłoszenia', count: tickets.length },
         { key: 'historia', label: 'Książka eksploatacji' },
-      ]} />
+      ].filter(Boolean)} />
 
       {tab === 'info' && (
         <div className="grid md:grid-cols-2 gap-4">
@@ -121,7 +124,7 @@ export default function SiteDetail() {
         </div>
       )}
 
-      {tab === 'centrala' && (
+      {tab === 'centrala' && data.panels && (
         <div className="flex flex-col gap-3">
           {panels.length === 0 && (
             <Card><Empty icon={CircuitBoard}>
@@ -129,18 +132,18 @@ export default function SiteDetail() {
               {clientPanels.length > 0 && <span className="text-[12.5px]">Możesz utworzyć nową kartę albo przypisać centralę, która obsługuje już inny obiekt klienta.</span>}
             </Empty></Card>
           )}
-          {panels.map((p) => <PanelCard key={p.id} panel={p} siteId={site.id} onUnlink={unlinkPanel} />)}
-          <div className="flex flex-wrap items-center gap-2">
+          {panels.map((p) => <PanelCard key={p.id} panel={p} siteId={site.id} onUnlink={can('panels.edit') ? unlinkPanel : undefined} />)}
+          {can('panels.edit') && <div className="flex flex-wrap items-center gap-2">
             <Button variant={panels.length ? 'ghost' : 'primary'} icon={Plus} onClick={newPanel}>{panels.length ? 'Dodaj kolejną centralę' : 'Utwórz kartę centrali'}</Button>
             {clientPanels.length > 0 && (
               <AssignPanel panels={clientPanels} onAssign={async (panelId) => { await api('panels.linkSite', { panel_id: panelId, site_id: site.id }); reload(); }} />
             )}
-          </div>
+          </div>}
         </div>
       )}
 
       {tab === 'urzadzenia' && (
-        <Card pad={false} title="Ewidencja elementów SSP" actions={<Button icon={Plus} onClick={() => setModal({ device: { site_id: site.id, status: 'sprawne', quantity: 1, manufacturer: site.panel_manufacturer } })}>Dodaj element</Button>}>
+        <Card pad={false} title="Ewidencja elementów SSP" actions={can('devices.edit') && <Button icon={Plus} onClick={() => setModal({ device: { site_id: site.id, status: 'sprawne', quantity: 1, manufacturer: site.panel_manufacturer } })}>Dodaj element</Button>}>
           {byType.length > 0 && (
             <div className="flex flex-wrap gap-2 px-4 py-3 border-b border-line bg-paper/40">
               {byType.map(([t, c]) => <span key={t} className="text-[12px] px-2 py-0.5 bg-white border border-line rounded-[2px]">{t} <b className="font-mono">{c}</b></span>)}
@@ -157,8 +160,8 @@ export default function SiteDetail() {
         </Card>
       )}
 
-      {tab === 'przeglady' && (
-        <Card pad={false} title="Przeglądy i konserwacje" actions={<Button icon={CalendarPlus} onClick={() => setModal('schedule')}>Zaplanuj</Button>}>
+      {tab === 'przeglady' && data.inspections && (
+        <Card pad={false} title="Przeglądy i konserwacje" actions={can('inspections.edit') && <Button icon={CalendarPlus} onClick={() => setModal('schedule')}>Zaplanuj</Button>}>
           <Table rows={inspections} empty="Brak przeglądów" onRow={(i) => nav(`/przeglady/${i.id}`)} columns={[
             { key: 'date', label: 'Data', className: 'w-32', render: (i) => <span className="font-mono text-[12.5px]">{fmtDate(i.performed_date || i.scheduled_date)}</span> },
             { key: 'type', label: 'Rodzaj', render: (i) => <div><div className="font-medium capitalize">{i.type}</div>{i.protocol_number && <div className="font-mono text-[11.5px] text-muted">{i.protocol_number}</div>}</div> },
@@ -169,8 +172,8 @@ export default function SiteDetail() {
         </Card>
       )}
 
-      {tab === 'zgloszenia' && (
-        <Card pad={false} title="Zgłoszenia serwisowe" actions={<Button icon={Plus} onClick={() => setModal({ ticket: { site_id: site.id } })}>Nowe</Button>}>
+      {tab === 'zgloszenia' && data.tickets && (
+        <Card pad={false} title="Zgłoszenia serwisowe" actions={can('tickets.create') && <Button icon={Plus} onClick={() => setModal({ ticket: { site_id: site.id } })}>Nowe</Button>}>
           <Table rows={tickets} empty="Brak zgłoszeń" onRow={(t) => setModal({ ticket: t })} columns={[
             { key: 'reported_at', label: 'Zgłoszono', className: 'w-36', render: (t) => <span className="font-mono text-[12px]">{fmtDateTime(t.reported_at)}</span> },
             { key: 'title', label: 'Zgłoszenie', render: (t) => <div><div className="font-medium">{t.title}</div><div className="text-[12px] text-muted">{t.category}{t.assignee_name ? ` · ${t.assignee_name}` : ''}</div></div> },
@@ -189,7 +192,7 @@ export default function SiteDetail() {
       {modal === 'edit' && clients.data && (
         <FormModal wide title="Edycja obiektu" fields={siteFields(clients.data)} initial={toForm(site)} onClose={() => setModal(null)}
           onSubmit={async (v) => { await api('sites.save', clean(v)); reload(); }}
-          onDelete={user.role === 'admin' ? async () => { await api('sites.delete', { id: site.id }); nav(`/klienci/${site.client_id}`); } : undefined} />
+          onDelete={can('sites.delete') ? async () => { await api('sites.delete', { id: site.id }); nav(`/klienci/${site.client_id}`); } : undefined} />
       )}
       {modal === 'schedule' && <ScheduleModal initial={{ site_id: site.id, scheduled_date: site.next_due || '' }} onClose={() => setModal(null)} onSaved={reload} />}
       {modal?.device && <DeviceModal device={modal.device} initialTab={modal.tab} onClose={() => setModal(null)} onSaved={reload} />}

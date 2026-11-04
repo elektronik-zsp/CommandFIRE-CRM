@@ -1,11 +1,13 @@
 import { useState } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import { Plus, Search } from 'lucide-react';
+import { useAuth } from '../auth';
 import { useApi, Card, Table, PageHeader, Button, Input, Select, ErrorBox, Badge } from '../ui';
 import { fmtDateTime, fmtDate, daysUntil, TICKET_PRIORITIES, TICKET_STATUSES } from '../format';
 import TicketModal from '../components/TicketModal';
 
 export default function Tickets() {
+  const { can } = useAuth();
   const [params, setParams] = useSearchParams();
   const openId = params.get('id');
   const [status, setStatus] = useState(openId ? '' : 'otwarte');
@@ -13,7 +15,7 @@ export default function Tickets() {
   const [search, setSearch] = useState('');
   const { data, error, reload } = useApi('tickets.list', { status: status || undefined, priority: priority || undefined, search: search.trim() || undefined });
 
-  const editing = params.get('nowe') === '1' ? {} : openId ? data?.find((t) => String(t.id) === openId) : null;
+  const editing = params.get('nowe') === '1' && can('tickets.create') ? {} : openId ? data?.find((t) => String(t.id) === openId) : null;
   const close = () => setParams({});
 
   return (
@@ -26,7 +28,7 @@ export default function Tickets() {
           <Search size={15} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
           <Input placeholder="Szukaj…" value={search} onChange={(e) => setSearch(e.target.value)} className="pl-8 w-52" />
         </div>
-        <Button icon={Plus} onClick={() => setParams({ nowe: '1' })}>Nowe zgłoszenie</Button>
+        {can('tickets.create') && <Button icon={Plus} onClick={() => setParams({ nowe: '1' })}>Nowe zgłoszenie</Button>}
       </PageHeader>
       {error && <ErrorBox>{error}</ErrorBox>}
       <Card pad={false} className="reveal">

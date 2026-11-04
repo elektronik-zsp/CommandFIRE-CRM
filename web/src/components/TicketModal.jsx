@@ -7,7 +7,7 @@ import { HistoryList, AddEntry } from './History';
 
 // Create / edit a service ticket. `ticket` = existing row or defaults for a new one.
 export default function TicketModal({ ticket = {}, onClose, onSaved, initialTab = 'dane' }) {
-  const { user } = useAuth();
+  const { can } = useAuth();
   const [tab, setTab] = useState(initialTab);
   const sites = useApi('sites.list', {});
   const users = useApi('users.list', {});
@@ -16,10 +16,10 @@ export default function TicketModal({ ticket = {}, onClose, onSaved, initialTab 
   if (!sites.data || !users.data) return <Modal title={title} onClose={onClose}><Spinner /></Modal>;
 
   const form = (
-    <RecordForm fields={ticketFields(sites.data, users.data)} initial={toForm({ category: 'awaria', priority: 'normalny', status: 'nowe', ...ticket })}
+    <RecordForm readOnly={!can(ticket.id ? 'tickets.edit' : 'tickets.create')} fields={ticketFields(sites.data, users.data)} initial={toForm({ category: 'awaria', priority: 'normalny', status: 'nowe', ...ticket })}
       onClose={onClose}
       onSubmit={async (v) => { await api('tickets.save', clean(v)); onSaved?.(); }}
-      onDelete={ticket.id && user.role === 'admin' ? async () => { await api('tickets.delete', { id: ticket.id }); onSaved?.(); } : undefined} />
+      onDelete={ticket.id && can('tickets.delete') ? async () => { await api('tickets.delete', { id: ticket.id }); onSaved?.(); } : undefined} />
   );
 
   return (
@@ -33,8 +33,8 @@ export default function TicketModal({ ticket = {}, onClose, onSaved, initialTab 
           {tab === 'dane' && form}
           {tab === 'historia' && (
             <div className="flex flex-col gap-4">
-              <AddEntry photos kinds={['komentarz']} withDate={false} placeholder="Dodaj komentarz — ustalenia z klientem, postęp prac… (zdjęcie można też wkleić Ctrl+V)" submitLabel="Dodaj komentarz"
-                onSubmit={async (v) => { await api('history.add', { entity: 'ticket', entity_id: ticket.id, kind: 'komentarz', comment: v.comment, photos: v.photos }); history.reload(); }} />
+              {can('history.add') && <AddEntry photos kinds={['komentarz']} withDate={false} placeholder="Dodaj komentarz — ustalenia z klientem, postęp prac… (zdjęcie można też wkleić Ctrl+V)" submitLabel="Dodaj komentarz"
+                onSubmit={async (v) => { await api('history.add', { entity: 'ticket', entity_id: ticket.id, kind: 'komentarz', comment: v.comment, photos: v.photos }); history.reload(); }} />}
               {history.data ? <HistoryList rows={history.data} onChanged={history.reload} /> : <Spinner />}
             </div>
           )}
