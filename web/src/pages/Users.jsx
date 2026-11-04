@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Plus, Pencil, Check, Lock, Ban, Save, Undo2 } from 'lucide-react';
+import { Plus, Pencil, Check, Lock, Ban, Save, Undo2, ShieldCheck, UserRound, ArrowRight } from 'lucide-react';
 import { api } from '../api';
 import { useAuth } from '../auth';
-import { useApi, Card, Table, PageHeader, Button, FormModal, ErrorBox, Badge, Tabs, Spinner } from '../ui';
+import { useApi, Card, Table, PageHeader, Button, FormModal, ErrorBox, Badge, Tabs, Spinner, Select, Empty } from '../ui';
 import { userFields } from '../forms';
-import { fmtDate } from '../format';
+import { fmtDate, fmtDateTime } from '../format';
 
 export default function Users() {
   const { user, setUser, can } = useAuth();
@@ -28,7 +28,8 @@ export default function Users() {
       <Tabs value={tab} onChange={(t) => setParams({ tab: t })} tabs={[
         { key: 'osoby', label: 'Osoby', count: data?.length },
         { key: 'role', label: 'Role i uprawnienia', count: roles.data?.roles.length },
-      ]} />
+        isAdmin && { key: 'dziennik', label: 'Dziennik zmian' },
+      ].filter(Boolean)} />
       {(error || roles.error) && <ErrorBox>{error || roles.error}</ErrorBox>}
 
       {tab === 'osoby' && (
@@ -50,6 +51,8 @@ export default function Users() {
       )}
 
       {tab === 'role' && (roles.data ? <RoleMatrix data={roles.data} isAdmin={isAdmin} onChanged={() => { roles.reload(); reload(); }} /> : !roles.error && <Spinner />)}
+
+      {tab === 'dziennik' && isAdmin && <AuditLog />}
 
       {editing && (
         <FormModal title={editing.id ? 'Edycja konta' : 'Nowa osoba w zespole'} fields={userFields(!editing.id, roleOptions)} initial={editing} onClose={() => setEditing(null)}
@@ -176,6 +179,75 @@ function RoleMatrix({ data, isAdmin, onChanged }) {
           onSubmit={async (v) => { await api('roles.save', { key: modal.key, name: v.name, description: v.description, permissions: saved[modal.key] }); onChanged(); }}
           onDelete={async () => { await api('roles.delete', { key: modal.key }); onChanged(); }} />
       )}
+    </div>
+  );
+}
+
+const ACTION_TONE = { utworzenie: 'ok', zmiana: 'warn', 'usunięcie': 'danger' };
+const show = (v) => (v == null || v === '' ? '—' : String(v));
+
+// Who changed which role, permission or team account, and when (administrators only).
+function AuditLog() {
+  const [target, setTarget] = useState('');
+  const [older, setOlder] = useState([]);
+  const [more, setMore] = useState(null);
+  const { data, error } = useApi('audit.list', { target: target || undefined });
+  useEffect(() => { setOlder([]); setMore(null); }, [target, data]);
+  const rows = [...(data || []), ...older];
+  const hasMore = more ?? (data?.length === 100);
+
+  async function loadMore() {
+    const next = await api('audit.list', { target: target || undefined, before: rows[rows.length - 1].id });
+    setOlder((o) => [...o, ...next]); setMore(next.length === 100);
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-[12.5px] text-muted max-w-2xl">Zmiany ról, uprawnień i kont zespołu — kto, kiedy i co zmienił. Hasła nie są zapisywane, tylko fakt ich zmiany.</p>
+        <Select value={target} onChange={(e) => setTarget(e.target.value)} className="w-56"
+          options={[{ value: '', label: 'Wszystkie zmiany' }, { value: 'role', label: 'Role i uprawnienia' }, { value: 'user', label: 'Konta zespołu' }]} />
+      </div>
+      {error && <ErrorBox>{error}</ErrorBox>}
+      <Card pad={false} className="reveal">
+        {!data ? <Spinner /> : rows.length === 0 ? <Empty icon={ShieldCheck}>Brak zapisanych zmian — dziennik prowadzony jest od wdrożenia tej funkcji</Empty> : (
+          <ol>
+            {rows.map((a) => (
+              <li key={a.id} className="grid sm:grid-cols-[150px_1fr] gap-x-4 gap-y-1 px-4 py-3 border-b border-line/70 last:border-0">
+                <div>
+                  <div className="font-mono text-[12px]">{fmtDateTime(a.created_at)}</div>
+                  <div className="text-[12px] text-muted">{a.user_name || '—'}</div>
+                </div>
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge tone={ACTION_TONE[a.action]}>{a.action}</Badge>
+                    {a.target === 'role' ? <ShieldCheck size={14} className="text-muted" /> : <UserRound size={14} className="text-muted" />}
+                    <span className="font-medium">{a.target === 'role' ? 'Rola' : 'Konto'} „{a.target_label}”</span>
+                  </div>
+                  {a.changes.length > 0 && (
+                    <ul className="mt-1.5 flex flex-col gap-1 text-[12.5px]">
+                      {a.changes.map((c, i) => (
+                        <li key={i} className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                          <span className="text-muted min-w-24">{c.label}</span>
+                          {c.added || c.removed ? (
+                            <span className="flex flex-wrap gap-1">
+                              {c.added.map((x) => <span key={'+' + x} className="px-1.5 rounded-[2px] bg-ok/10 text-ok border border-ok/30">+ {x}</span>)}
+                              {c.removed.map((x) => <span key={'-' + x} className="px-1.5 rounded-[2px] bg-signal/5 text-signal-dark border border-signal/30 line-through decoration-signal/50">− {x}</span>)}
+                            </span>
+                          ) : c.from !== undefined ? (
+                            <span className="inline-flex items-center gap-1.5"><span className="text-ink-3">{show(c.from)}</span><ArrowRight size={12} className="text-muted" /><b className="font-medium">{show(c.to)}</b></span>
+                          ) : <b className="font-medium">{show(c.to)}</b>}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </li>
+            ))}
+          </ol>
+        )}
+      </Card>
+      {hasMore && <Button variant="ghost" className="self-center" onClick={loadMore}>Pokaż starsze</Button>}
     </div>
   );
 }

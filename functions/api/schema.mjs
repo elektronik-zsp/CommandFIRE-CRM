@@ -201,6 +201,21 @@ ALTER TABLE history ALTER COLUMN site_id DROP NOT NULL;
 -- panel entries belong to the panel; only "panel deleted" notes stay attached to the sites it served
 UPDATE history SET site_id = NULL WHERE entity = 'panel' AND kind <> 'usunięcie' AND site_id IS NOT NULL;
 
+-- Change log of roles, permissions and team accounts (shown to administrators).
+-- user_name / target_label are copies so entries stay readable after a deletion.
+CREATE TABLE IF NOT EXISTS audit_log (
+  id SERIAL PRIMARY KEY,
+  user_id INT REFERENCES users(id) ON DELETE SET NULL,
+  user_name TEXT,
+  action TEXT NOT NULL,
+  target TEXT NOT NULL,
+  target_key TEXT,
+  target_label TEXT,
+  changes JSONB NOT NULL DEFAULT '[]'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS audit_log_created_idx ON audit_log(created_at DESC);
+
 -- Photos attached to a history entry (resized in the browser; full image + thumbnail in private storage).
 CREATE TABLE IF NOT EXISTS history_photos (
   id SERIAL PRIMARY KEY,

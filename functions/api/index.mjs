@@ -322,6 +322,24 @@ async function needEntity(user, entity, id) {
 // The "service access" note is visible only with panels.access
 const maskPanel = (user, p) => (p && !can(user, 'panels.access') ? { ...p, service_access: undefined } : p);
 
+// ---------- audit log (roles, permissions, team accounts) ----------
+
+// changes: [{ label, from, to }] for fields, [{ label, added: [...], removed: [...] }] for permission sets
+async function audit(user, action, target, key, label, changes = []) {
+  await q(`INSERT INTO audit_log (user_id, user_name, action, target, target_key, target_label, changes) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+    [user.id, user.name, action, target, key, label, JSON.stringify(changes)]);
+}
+function permChange(before = [], after = []) {
+  const added = after.filter((x) => !before.includes(x)).map((x) => PERMISSION_LABEL[x] || x);
+  const removed = before.filter((x) => !after.includes(x)).map((x) => PERMISSION_LABEL[x] || x);
+  return added.length || removed.length ? [{ label: 'Uprawnienia', added, removed }] : [];
+}
+function fieldChanges(before, after, labels) {
+  return Object.entries(labels).filter(([k]) => after[k] !== undefined && (before?.[k] ?? null) !== (after[k] ?? null))
+    .map(([k, label]) => ({ label, from: before?.[k] ?? null, to: after[k] ?? null }));
+}
+const roleName = async (key) => (await one('SELECT name FROM roles WHERE key=$1', [key]))?.name || key;
+
 // ---------- shared SQL ----------
 
 // next_due: earliest planned inspection, otherwise last inspection + interval
@@ -384,6 +402,7 @@ const actions = {
     if (!checkPassword(current || '', user.password_hash)) throw new HttpError(400, 'Obecne hasło jest nieprawidłowe');
     if (!next || next.length < 8) throw new HttpError(400, 'Nowe hasło musi mieć co najmniej 8 znaków');
     await q('UPDATE users SET password_hash=$1 WHERE id=$2', [hashPassword(next), user.id]);
+    await audit(user, 'zmiana', 'user', String(user.id), user.name, [{ label: 'Hasło', to: 'zmienione przez właściciela konta' }]);
     return { ok: true };
   },
 
@@ -408,6 +427,11 @@ const actions = {
     if (p.id === user.id && user.role === 'admin' && p.role !== 'admin') throw new HttpError(400, 'Nie możesz odebrać sobie uprawnień administratora');
     try {
       const row = await save('users', ['email', 'name', 'phone', 'role', 'active', 'password_hash'], data);
+      const changes = fieldChanges(target, row, { name: 'Imię i nazwisko', email: 'E-mail', phone: 'Telefon' });
+      if (target?.role !== row.role) changes.push({ label: 'Rola', from: target ? await roleName(target.role) : null, to: await roleName(row.role) });
+      if (target && target.active !== row.active) changes.push({ label: 'Konto', from: target.active ? 'aktywne' : 'wyłączone', to: row.active ? 'aktywne' : 'wyłączone' });
+      if (target && data.password_hash) changes.push({ label: 'Hasło', to: 'zmienione' });
+      if (!target || changes.length) await audit(user, target ? 'zmiana' : 'utworzenie', 'user', String(row.id), row.name, changes);
       return publicUser(await loadUser('u.id=$1', [row.id]));
     } catch (e) {
       if (e.code === '23505') throw new HttpError(400, 'Użytkownik z tym adresem e-mail już istnieje');
@@ -427,34 +451,57 @@ const actions = {
     if (key === 'admin') throw new HttpError(400, 'Roli Administrator nie można zmieniać');
     const perms = [...new Set((permissions || []).filter((x) => ALL_PERMISSIONS.includes(x)))];
     if (key) {
+      const before = await one('SELECT * FROM roles WHERE key=$1', [key]);
+      if (!before) throw new HttpError(404, 'Nie znaleziono roli');
       const row = await one('UPDATE roles SET name=$2, description=$3, permissions=$4 WHERE key=$1 RETURNING *', [key, name.trim(), description || null, perms]);
-      if (!row) throw new HttpError(404, 'Nie znaleziono roli');
+      const changes = [...fieldChanges(before, row, { name: 'Nazwa', description: 'Opis' }), ...permChange(before.permissions, row.permissions)];
+      if (changes.length) await audit(user, 'zmiana', 'role', key, row.name, changes);
       return row;
     }
     const newKey = `rola-${crypto.randomBytes(4).toString('hex')}`;
-    return one(`INSERT INTO roles (key, name, description, permissions, sort) VALUES ($1,$2,$3,$4,
+    const row = await one(`INSERT INTO roles (key, name, description, permissions, sort) VALUES ($1,$2,$3,$4,
       (SELECT COALESCE(max(sort), 0) + 1 FROM roles)) RETURNING *`, [newKey, name.trim(), description || null, perms]);
+    await audit(user, 'utworzenie', 'role', newKey, row.name, permChange([], perms));
+    return row;
   },
   async 'roles.delete'({ key }, user) {
     requireAdmin(user);
     if (key === 'admin') throw new HttpError(400, 'Roli Administrator nie można usunąć');
     const used = await one('SELECT count(*)::int AS n FROM users WHERE role=$1', [key]);
     if (used.n) throw new HttpError(400, `Rola jest przypisana do ${used.n} ${used.n === 1 ? 'konta' : 'kont'} — najpierw zmień im rolę`);
-    await q('DELETE FROM roles WHERE key=$1', [key]);
+    const row = await one('DELETE FROM roles WHERE key=$1 RETURNING *', [key]);
+    if (row) await audit(user, 'usunięcie', 'role', key, row.name, permChange(row.permissions, []));
     return { ok: true };
+  },
+  async 'audit.list'({ target, before }, user) {
+    requireAdmin(user);
+    return q(`SELECT a.*, COALESCE(u.name, a.user_name) AS user_name FROM audit_log a LEFT JOIN users u ON u.id=a.user_id
+      WHERE ($1::text IS NULL OR a.target=$1) AND ($2::int IS NULL OR a.id < $2) ORDER BY a.id DESC LIMIT 100`, [target || null, before || null]);
   },
 
   // --- dashboard ---
   // sections the user may not see come back as null
   async dashboard(_, user) {
     const own = ownOnly(user);
-    const [counts] = await q(`SELECT
+    const sitesOk = can(user, 'sites.view'), ticketsOk = can(user, 'tickets.view'), inspOk = can(user, 'inspections.view');
+    // counters follow the same rules as the lists: no permission → null, "own work only" → assigned to the user
+    const [c] = await q(`SELECT
       (SELECT count(*)::int FROM clients) AS clients,
       (SELECT count(*)::int FROM sites) AS sites,
       (SELECT count(*)::int FROM devices) AS devices,
-      (SELECT count(*)::int FROM tickets WHERE status <> 'zakończone') AS open_tickets,
-      (SELECT count(*)::int FROM tickets WHERE status <> 'zakończone' AND priority='krytyczny') AS critical_tickets,
-      (SELECT count(*)::int FROM inspections WHERE status='wykonany' AND performed_date >= date_trunc('month', now())) AS done_this_month`);
+      (SELECT count(*)::int FROM tickets WHERE status <> 'zakończone' AND ($1::int IS NULL OR assigned_to=$1)) AS open_tickets,
+      (SELECT count(*)::int FROM tickets WHERE status <> 'zakończone' AND priority='krytyczny' AND ($1::int IS NULL OR assigned_to=$1)) AS critical_tickets,
+      (SELECT count(*)::int FROM inspections WHERE status='wykonany' AND performed_date >= date_trunc('month', now()) AND ($1::int IS NULL OR technician_id=$1)) AS done_this_month,
+      (SELECT count(*)::int FROM inspections WHERE status='zaplanowany' AND scheduled_date < current_date AND ($1::int IS NULL OR technician_id=$1)) AS overdue_inspections`, [own]);
+    const counts = {
+      clients: sitesOk || can(user, 'clients.view') ? c.clients : null,
+      sites: sitesOk ? c.sites : null, devices: sitesOk ? c.devices : null,
+      open_tickets: ticketsOk ? c.open_tickets : null, critical_tickets: ticketsOk ? c.critical_tickets : null,
+      done_this_month: inspOk ? c.done_this_month : null,
+      // with "own work only" overdue = own planned inspections past their date; otherwise overdue sites (computed in the app)
+      overdue_inspections: inspOk && own ? c.overdue_inspections : null,
+      own: !!own,
+    };
     const sites = await q(`SELECT * FROM (${SITE_SELECT}) x WHERE next_due IS NOT NULL AND next_due <= current_date + 30 ORDER BY next_due LIMIT 50`);
     const noSchedule = await q(`SELECT * FROM (${SITE_SELECT}) x WHERE next_due IS NULL ORDER BY name LIMIT 20`);
     const tickets = await q(`${TICKET_SELECT} WHERE t.status <> 'zakończone' AND ($1::int IS NULL OR t.assigned_to=$1)
@@ -466,18 +513,17 @@ const actions = {
     const contracts = await q(`SELECT s.id, s.name, s.contract_number, s.contract_end, c.name AS client_name FROM sites s
       JOIN clients c ON c.id=s.client_id WHERE s.contract_end IS NOT NULL AND s.contract_end <= current_date + 60
       ORDER BY s.contract_end LIMIT 15`);
-    const perMonth = await q(`SELECT to_char(m, 'YYYY-MM') AS month,
-        (SELECT count(*)::int FROM inspections i WHERE i.status='wykonany' AND date_trunc('month', i.performed_date)=m) AS done,
-        (SELECT count(*)::int FROM tickets t WHERE date_trunc('month', t.reported_at)=m) AS tickets
+    const perMonth = (await q(`SELECT to_char(m, 'YYYY-MM') AS month,
+        (SELECT count(*)::int FROM inspections i WHERE i.status='wykonany' AND date_trunc('month', i.performed_date)=m AND ($1::int IS NULL OR i.technician_id=$1)) AS done,
+        (SELECT count(*)::int FROM tickets t WHERE date_trunc('month', t.reported_at)=m AND ($1::int IS NULL OR t.assigned_to=$1)) AS tickets
       FROM generate_series(date_trunc('month', now()) - interval '11 months', date_trunc('month', now()), interval '1 month') m
-      ORDER BY m`);
+      ORDER BY m`, [own])).map((r) => ({ month: r.month, done: inspOk ? r.done : null, tickets: ticketsOk ? r.tickets : null }));
     const demo = !!(await one('SELECT 1 FROM clients WHERE demo LIMIT 1'));
-    const sitesOk = can(user, 'sites.view');
     return {
       counts, perMonth, demo,
       sites: sitesOk ? sites : null, noSchedule: sitesOk ? noSchedule : null, replacements: sitesOk ? replacements : null,
       contracts: sitesOk || can(user, 'clients.view') ? contracts : null,
-      tickets: can(user, 'tickets.view') ? tickets : null,
+      tickets: ticketsOk ? tickets : null,
     };
   },
 

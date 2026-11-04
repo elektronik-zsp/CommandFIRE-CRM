@@ -39,6 +39,8 @@ function MonthBars({ title, rows, field, color }) {
   );
 }
 
+const STAT_COLS = { 1: 'md:grid-cols-1', 2: 'md:grid-cols-2', 3: 'md:grid-cols-3', 4: 'md:grid-cols-4', 5: 'md:grid-cols-5' };
+
 export default function Dashboard() {
   const { can } = useAuth();
   const nav = useNavigate();
@@ -48,7 +50,17 @@ export default function Dashboard() {
   if (loading && !data) return <Spinner />;
   if (error) return <ErrorBox>{error}</ErrorBox>;
   const { counts, sites, noSchedule, tickets, replacements, contracts, perMonth, demo } = data;
-  const overdue = (sites || []).filter((s) => daysUntil(s.next_due) < 0).length;
+  const own = counts.own;
+  const overdue = own ? counts.overdue_inspections : sites && sites.filter((s) => daysUntil(s.next_due) < 0).length;
+  // tiles follow the role: hidden without the permission, "own work only" counts only what is assigned to the user
+  const stats = [
+    counts.sites != null && { label: 'Obiekty', value: counts.sites, sub: counts.clients != null ? `${counts.clients} klientów` : undefined },
+    counts.devices != null && { label: 'Elementy SSP', value: counts.devices, sub: 'w ewidencji' },
+    overdue != null && { label: 'Po terminie', value: overdue, tone: overdue ? 'danger' : undefined, sub: own ? 'moje zaległe przeglądy' : 'zaległe przeglądy' },
+    counts.open_tickets != null && { label: own ? 'Moje zgłoszenia' : 'Zgłoszenia', value: counts.open_tickets, tone: counts.critical_tickets ? 'danger' : counts.open_tickets ? 'warn' : undefined, sub: `${counts.critical_tickets} krytycznych` },
+    counts.done_this_month != null && { label: 'Wykonane', value: counts.done_this_month, sub: own ? 'moje przeglądy w tym miesiącu' : 'przeglądy w tym miesiącu' },
+  ].filter(Boolean);
+  const activity = perMonth[0] && (perMonth[0].done != null || perMonth[0].tickets != null);
 
   async function demoAction(action) {
     if (action === 'demo.clear' && !confirm('Usunąć wszystkie dane demonstracyjne (klientów, obiekty, przeglądy, zgłoszenia)?')) return;
@@ -78,12 +90,8 @@ export default function Dashboard() {
         </div>
       )}
 
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
-        <Stat label="Obiekty" value={counts.sites} sub={`${counts.clients} klientów`} delay={0} />
-        <Stat label="Elementy SSP" value={counts.devices} sub="w ewidencji" delay={50} />
-        <Stat label="Po terminie" value={overdue} tone={overdue ? 'danger' : undefined} sub="zaległe przeglądy" delay={100} />
-        <Stat label="Zgłoszenia" value={counts.open_tickets} tone={counts.critical_tickets ? 'danger' : counts.open_tickets ? 'warn' : undefined} sub={`${counts.critical_tickets} krytycznych`} delay={150} />
-        <Stat label="Wykonane" value={counts.done_this_month} sub="przeglądy w tym miesiącu" delay={200} />
+      <div className={`grid grid-cols-2 ${STAT_COLS[stats.length] || 'md:grid-cols-5'} gap-3 mb-6`}>
+        {stats.map((st, i) => <Stat key={st.label} {...st} delay={i * 50} />)}
       </div>
 
       <div className="grid xl:grid-cols-[1.45fr_1fr] gap-4 mb-4">
@@ -103,7 +111,7 @@ export default function Dashboard() {
           />
         </Card>}
 
-        {tickets && <Card title="Otwarte zgłoszenia" pad={false} actions={<Link to="/zgloszenia" className="text-[12px] text-muted hover:text-ink">Wszystkie →</Link>}>
+        {tickets && <Card title={own ? 'Moje otwarte zgłoszenia' : 'Otwarte zgłoszenia'} pad={false} actions={<Link to="/zgloszenia" className="text-[12px] text-muted hover:text-ink">Wszystkie →</Link>}>
           {tickets.length === 0 ? <Empty>Brak otwartych zgłoszeń</Empty> : (
             <ul>
               {tickets.map((t) => (
@@ -150,12 +158,12 @@ export default function Dashboard() {
             })}</ul>
           )}
         </Card>}
-        <Card title={<span className="flex items-center gap-2"><CalendarClock size={16} />Aktywność</span>} className="md:col-span-2 xl:col-span-1">
+        {activity && <Card title={<span className="flex items-center gap-2"><CalendarClock size={16} />{own ? 'Moja aktywność' : 'Aktywność'}</span>} className="md:col-span-2 xl:col-span-1">
           <div className="flex flex-col gap-6">
-            <MonthBars title="Wykonane przeglądy" rows={perMonth} field="done" color="var(--color-ink)" />
-            <MonthBars title="Nowe zgłoszenia serwisowe" rows={perMonth} field="tickets" color="var(--color-signal)" />
+            {perMonth[0].done != null && <MonthBars title={own ? 'Moje wykonane przeglądy' : 'Wykonane przeglądy'} rows={perMonth} field="done" color="var(--color-ink)" />}
+            {perMonth[0].tickets != null && <MonthBars title={own ? 'Zgłoszenia przypisane do mnie' : 'Nowe zgłoszenia serwisowe'} rows={perMonth} field="tickets" color="var(--color-signal)" />}
           </div>
-        </Card>
+        </Card>}
       </div>
 
       {noSchedule?.length > 0 && (
