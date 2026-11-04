@@ -248,6 +248,17 @@ CREATE TABLE IF NOT EXISTS doc_counters (
   PRIMARY KEY (kind, period)
 );
 
+-- Element dictionary: manufacturer's element code → symbol (model) and element type; used by the import.
+CREATE TABLE IF NOT EXISTS device_codes (
+  id SERIAL PRIMARY KEY,
+  manufacturer TEXT NOT NULL,
+  code TEXT NOT NULL,
+  model TEXT NOT NULL,
+  type TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (manufacturer, code)
+);
+
 -- Photos attached to a history entry (resized in the browser; full image + thumbnail in private storage).
 CREATE TABLE IF NOT EXISTS history_photos (
   id SERIAL PRIMARY KEY,

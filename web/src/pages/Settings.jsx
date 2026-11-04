@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Save } from 'lucide-react';
+import { Save, Plus, Trash2, Search, Check } from 'lucide-react';
 import { api } from '../api';
 import { useApi, Card, PageHeader, Button, Spinner, ErrorBox, Field, Input, Select, Tabs } from '../ui';
+import { DEVICE_TYPES, PANEL_MANUFACTURERS } from '../format';
 
 const TEXTAREA = 'w-full px-2.5 py-2 bg-white border border-line rounded-[3px] text-[13.5px] outline-none focus:border-ink focus:ring-2 focus:ring-ink/10 resize-y';
 
@@ -39,9 +40,10 @@ export default function Settings() {
       <Tabs value={tab} onChange={(t) => setParams({ tab: t })} tabs={[
         { key: 'firma', label: 'Dane firmy' },
         { key: 'numeracja', label: 'Numeracja dokumentów' },
+        { key: 'slownik', label: 'Słownik elementów' },
       ]} />
-      {error && <ErrorBox>{error}</ErrorBox>}
-      {!data ? !error && <Spinner /> : tab === 'firma' ? <CompanyForm data={data} onSaved={setData} /> : <NumberingForm data={data} onSaved={setData} />}
+      {error && tab !== 'slownik' && <ErrorBox>{error}</ErrorBox>}
+      {tab === 'slownik' ? <Dictionary /> : !data ? !error && <Spinner /> : tab === 'firma' ? <CompanyForm data={data} onSaved={setData} /> : <NumberingForm data={data} onSaved={setData} />}
     </>
   );
 }
@@ -116,6 +118,75 @@ function NumberingForm({ data, onSaved }) {
         </ul>
         <p className="mt-3 text-[12.5px] text-muted">Numer nadawany jest przy <b className="text-ink">zamknięciu przeglądu</b> i przy <b className="text-ink">wystawieniu protokołu serwisowego</b>, według daty wykonania. „Następny numer” pozwala kontynuować dotychczasową (np. papierową) numerację w bieżącym okresie. Numer wpisany ręcznie w przeglądzie zostaje zachowany.</p>
       </Card>
+    </form>
+  );
+}
+
+// Element dictionary: manufacturer's element code (Polon-Alfa: first two characters of the serial number) → symbol and type.
+const EMPTY = { manufacturer: 'Polon-Alfa', code: '', model: '', type: '' };
+const TYPE_OPTS = DEVICE_TYPES.map((t) => ({ value: t, label: t }));
+
+function Dictionary() {
+  const { data, error, reload } = useApi('dictionary.list', {});
+  const [search, setSearch] = useState('');
+  const [msg, setMsg] = useState(null);
+  if (error) return <ErrorBox>{error}</ErrorBox>;
+  if (!data) return <Spinner />;
+  const t = search.trim().toLowerCase();
+  const rows = data.filter((d) => !t || `${d.manufacturer} ${d.code} ${d.model} ${d.type}`.toLowerCase().includes(t));
+  const done = (text) => { setMsg({ ok: true, text }); reload(); };
+  const fail = (e) => setMsg({ ok: false, text: e.message });
+
+  return (
+    <div className="grid lg:grid-cols-[1fr_320px] gap-4 items-start">
+      <Card pad={false} className="reveal" title={`Słownik elementów (${data.length})`}
+        actions={<div className="relative"><Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" /><Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Szukaj kodu, symbolu…" className="pl-8 w-52" /></div>}>
+        {msg && <div className={`px-4 py-2 border-b border-line text-[13px] ${msg.ok ? 'text-ok' : 'text-signal'}`}>{msg.text}</div>}
+        <div className="grid grid-cols-[150px_80px_1fr_220px_76px] gap-2 px-4 py-2 border-b border-line font-mono text-[10.5px] uppercase tracking-[0.1em] text-muted">
+          <span>Producent</span><span>Kod</span><span>Symbol</span><span>Typ elementu</span><span />
+        </div>
+        <DictRow key={`new-${data.length}`} row={EMPTY} isNew onSaved={(r) => done(`Dodano ${r.model}.`)} onError={fail} />
+        {rows.map((d) => <DictRow key={`${d.id}-${d.code}-${d.model}-${d.type}-${d.manufacturer}`} row={d} onSaved={(r) => done(`Zapisano ${r.model}.`)} onError={fail}
+          onDelete={async () => { if (!confirm(`Usunąć ${d.model} (kod ${d.code}) ze słownika?`)) return; try { await api('dictionary.delete', { id: d.id }); done(`Usunięto ${d.model}.`); } catch (e) { fail(e); } }} />)}
+        {rows.length === 0 && <div className="px-4 py-4 text-[13px] text-muted">Brak pozycji pasujących do wyszukiwania.</div>}
+      </Card>
+      <Card title="Jak to działa" className="reveal">
+        <div className="flex flex-col gap-2 text-[13px] text-ink-3">
+          <p>Przy <b className="text-ink">imporcie elementów z pliku centrali</b> kod elementu jest szukany w słowniku — stąd symbol (model) i typ w ewidencji.</p>
+          <p>W centralach <b className="text-ink">Polon-Alfa</b> kod to <b className="text-ink">dwa pierwsze znaki numeru seryjnego</b>, np. numer <code className="font-mono bg-paper-2 px-1">02</code>6283007801 → DOR-4046.</p>
+          <p>Elementy typu <b className="text-ink">Moduł wejść/wyjść</b> dostają numer modułu zamiast strefy.</p>
+          <p>Zmiany słownika nie zmieniają elementów już zapisanych w ewidencji — obowiązują przy kolejnych importach.</p>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+function DictRow({ row, isNew, onSaved, onError, onDelete }) {
+  const [v, setV] = useState(row);
+  const [busy, setBusy] = useState(false);
+  const dirty = ['manufacturer', 'code', 'model', 'type'].some((k) => (v[k] || '') !== (row[k] || ''));
+  const set = (k, x) => setV((s) => ({ ...s, [k]: x }));
+  async function save(e) {
+    e?.preventDefault();
+    setBusy(true);
+    try { const r = await api('dictionary.save', v); if (isNew) setV(EMPTY); onSaved(r); } catch (err) { onError(err); }
+    setBusy(false);
+  }
+  return (
+    <form onSubmit={save} className={`grid grid-cols-[150px_80px_1fr_220px_76px] gap-2 items-center px-4 py-1.5 border-b border-line/70 last:border-0 ${isNew ? 'bg-paper/60' : dirty ? 'bg-amber/5' : ''}`}>
+      <Select value={v.manufacturer} onChange={(e) => set('manufacturer', e.target.value)} options={PANEL_MANUFACTURERS} />
+      <Input value={v.code} onChange={(e) => set('code', e.target.value.toUpperCase())} placeholder={isNew ? 'np. 02' : ''} className="font-mono" maxLength={12} />
+      <Input value={v.model} onChange={(e) => set('model', e.target.value)} placeholder={isNew ? 'np. DOR-4046' : ''} className="font-mono" />
+      <Select value={v.type} onChange={(e) => set('type', e.target.value)} options={TYPE_OPTS} placeholder={isNew ? '— typ —' : undefined} />
+      <span className="flex justify-end gap-1">
+        {isNew
+          ? <Button type="submit" icon={Plus} loading={busy} disabled={!v.code || !v.model || !v.type} title="Dodaj do słownika">Dodaj</Button>
+          : <>
+            {dirty && <button type="submit" disabled={busy} title="Zapisz zmiany" aria-label="Zapisz zmiany" className="w-8 h-8 flex items-center justify-center rounded-[3px] bg-ink text-white cursor-pointer"><Check size={15} /></button>}
+            <button type="button" onClick={onDelete} title="Usuń" aria-label="Usuń" className="w-8 h-8 flex items-center justify-center text-muted hover:text-signal cursor-pointer"><Trash2 size={15} /></button>
+          </>}
+      </span>
     </form>
   );
 }

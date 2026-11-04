@@ -37,7 +37,7 @@ export function dueTone(n) {
 export const MONTHS = ['styczeń', 'luty', 'marzec', 'kwiecień', 'maj', 'czerwiec', 'lipiec', 'sierpień', 'wrzesień', 'październik', 'listopad', 'grudzień'];
 
 // ---- dictionaries ----
-export const DEVICE_TYPES = ['Centrala', 'Czujka dymu optyczna', 'Czujka ciepła', 'Czujka wielosensorowa', 'Czujka liniowa', 'Czujka płomienia',
+export const DEVICE_TYPES = ['Centrala', 'Czujka dymu optyczna', 'Czujka dymu jonizacyjna', 'Czujka ciepła', 'Czujka wielosensorowa', 'Czujka liniowa', 'Czujka płomienia',
   'Czujka zasysająca (ASD)', 'ROP', 'Sygnalizator akustyczny', 'Sygnalizator akustyczno-optyczny', 'Moduł wejść/wyjść', 'Izolator zwarć',
   'Zasilacz', 'Akumulator', 'Urządzenie transmisji alarmu (UTA)', 'Panel wyniesiony', 'DSO — centrala', 'Głośnik DSO', 'Inne'];
 export const DEVICE_STATUSES = ['sprawne', 'do obserwacji', 'uszkodzone', 'wycofane'];

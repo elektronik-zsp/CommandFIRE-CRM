@@ -12,7 +12,7 @@ import { SCHEMA, DEFAULT_CHECKLIST } from './schema.mjs';
 import { seedDemo } from './demo.mjs';
 import { PERMISSION_GROUPS, ALL_PERMISSIONS, DEFAULT_ROLES } from './permissions.mjs';
 import { parseConfigFile } from './importers.mjs';
-import { COMPANY_FIELDS, DOC_KINDS, RESETS as RESET_LABEL, defaultNumbering, counterPeriod, formatNumber, checkNumbering } from './documents.mjs';
+import { DEFAULT_DEVICE_CODES, COMPANY_FIELDS, DOC_KINDS, RESETS as RESET_LABEL, defaultNumbering, counterPeriod, formatNumber, checkNumbering } from './documents.mjs';
 
 // DATE columns as plain 'YYYY-MM-DD' strings (no timezone shifting)
 pg.types.setTypeParser(1082, (v) => v);
@@ -46,11 +46,18 @@ function db() {
     });
     pool.on('error', (err) => console.error('[pg] idle connection dropped:', err.message));
   }
-  if (!schemaReady) schemaReady = pool.query(SCHEMA).then(() => seedRoles(pool)).catch((e) => { schemaReady = null; throw e; });
+  if (!schemaReady) schemaReady = pool.query(SCHEMA).then(() => seedRoles(pool)).then(() => seedDeviceCodes(pool)).catch((e) => { schemaReady = null; throw e; });
   return pool;
 }
 
 // Default roles are seeded once (an empty table); the admin role is always present and always complete.
+async function seedDeviceCodes(p) {
+  const { rows } = await p.query('SELECT count(*)::int AS n FROM device_codes');
+  if (rows[0].n) return;
+  for (const d of DEFAULT_DEVICE_CODES) {
+    await p.query('INSERT INTO device_codes (manufacturer, code, model, type) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING', [d.manufacturer, d.code, d.model, d.type]);
+  }
+}
 async function seedRoles(p) {
   const { rows } = await p.query('SELECT count(*)::int AS n FROM roles');
   for (const r of rows[0].n ? DEFAULT_ROLES.filter((x) => x.key === 'admin') : DEFAULT_ROLES) {
@@ -691,7 +698,8 @@ const actions = {
       if (buf.length > MAX_FILE) throw new HttpError(400, 'Plik jest za duży (maks. 4 MB)');
     }
     let parsed;
-    try { parsed = parseConfigFile(buf, filename); } catch (e) { throw new HttpError(400, e.message); }
+    const dict = await q('SELECT manufacturer, code, model, type FROM device_codes');
+    try { parsed = parseConfigFile(buf, filename, dict); } catch (e) { throw new HttpError(400, e.message); }
     if (!parsed.rows.length) throw new HttpError(400, 'W pliku nie znaleziono skonfigurowanych elementów');
 
     // target site: a site whose name appears in the element's zone description, else the loop's usual site
@@ -1029,6 +1037,33 @@ const actions = {
     return row;
   },
 
+  // --- element dictionary (Ustawienia → Słownik elementów) ---
+  async 'dictionary.list'() {
+    return q('SELECT * FROM device_codes ORDER BY manufacturer, code');
+  },
+  async 'dictionary.save'({ id, manufacturer, code, model, type }, user) {
+    const clean = { manufacturer: manufacturer?.trim() || 'Polon-Alfa', code: String(code || '').trim().toUpperCase(), model: model?.trim(), type: type?.trim() };
+    if (!clean.code || clean.code.length > 12) throw new HttpError(400, 'Podaj kod elementu (np. 02)');
+    if (!clean.model) throw new HttpError(400, 'Podaj symbol elementu (np. DOR-4046)');
+    if (!clean.type) throw new HttpError(400, 'Wybierz typ elementu');
+    const before = id ? await one('SELECT * FROM device_codes WHERE id=$1', [id]) : null;
+    if (id && !before) throw new HttpError(404, 'Nie znaleziono pozycji słownika');
+    try {
+      const row = await save('device_codes', ['manufacturer', 'code', 'model', 'type'], { id, ...clean });
+      const changes = fieldChanges(before, row, { manufacturer: 'Producent', code: 'Kod', model: 'Symbol', type: 'Typ' });
+      if (!before || changes.length) await audit(user, before ? 'zmiana' : 'utworzenie', 'settings', 'dictionary', `Słownik elementów: ${row.model}`, changes);
+      return row;
+    } catch (e) {
+      if (e.code === '23505') throw new HttpError(400, `Kod ${clean.code} producenta ${clean.manufacturer} jest już w słowniku`);
+      throw e;
+    }
+  },
+  async 'dictionary.delete'({ id }, user) {
+    const row = await one('DELETE FROM device_codes WHERE id=$1 RETURNING *', [id]);
+    if (row) await audit(user, 'usunięcie', 'settings', 'dictionary', `Słownik elementów: ${row.model}`, [{ label: 'Kod', from: row.code, to: null }]);
+    return { ok: true };
+  },
+
   // --- settings ---
   async 'settings.get'() {
     return { company: await getCompany(), numbering: await getNumbering(), next: await peekNumbers(), kinds: DOC_KINDS };
@@ -1110,7 +1145,7 @@ const REQUIRES = {
   'inspections.complete': ['inspections.complete'], 'inspections.delete': ['inspections.delete'],
   'tickets.list': ['tickets.view'], 'tickets.save': ['tickets.create', 'tickets.edit'], 'tickets.delete': ['tickets.delete'],
   'protocols.get': ['tickets.view'], 'protocols.save': ['tickets.edit'],
-  'settings.save': ['settings.manage'],
+  'settings.save': ['settings.manage'], 'dictionary.save': ['settings.manage'], 'dictionary.delete': ['settings.manage'],
   'demo.seed': ['demo.manage'], 'demo.clear': ['demo.manage'],
 };
 

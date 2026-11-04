@@ -130,16 +130,19 @@ function Preview({ data, onBack, onClose, onDone }) {
         <h3 className="font-display uppercase tracking-wider text-[13px] text-ink-3 mb-1.5">Rodzaje elementów w pliku</h3>
         <div className="border border-line rounded-[3px] divide-y divide-line">
           {data.codes.map((c) => (
-            <div key={c.code} className="grid grid-cols-[70px_1fr_50px_230px] items-center gap-3 px-3 py-1.5 text-[13px]">
-              <code className="font-mono text-[12px] text-muted">{c.code}</code>
-              <span>{c.label}</span>
+            <div key={c.code} className="grid grid-cols-[90px_1fr_50px_230px] items-center gap-3 px-3 py-1.5 text-[13px]">
+              <code className="font-mono text-[12px] text-muted break-all">{c.code}</code>
+              <span className={c.known ? 'font-medium' : 'text-signal-dark'}>{c.known ? c.label : `${c.label} — nieznany`}</span>
               <span className="font-mono text-right text-muted">{c.count}×</span>
               <Select value={types[c.code]} onChange={(e) => setTypes({ ...types, [c.code]: e.target.value })}
                 options={[...DEVICE_TYPES.map((t) => ({ value: t, label: t })), { value: SKIP, label: '— nie importuj —' }]} />
             </div>
           ))}
         </div>
-        {data.format.startsWith('POLON') && <p className="mt-1.5 text-[12px] text-muted">Rodzaj elementu odczytany z kodu w konfiguracji — sprawdź i w razie potrzeby popraw; zmiana dotyczy wszystkich elementów z tym kodem.</p>}
+        <p className="mt-1.5 text-[12px] text-muted">
+          {data.format.startsWith('POLON') ? 'Kod = dwa pierwsze znaki numeru seryjnego. ' : ''}Symbol i typ pochodzą ze <b className="text-ink">Słownika elementów</b> (Ustawienia); tu możesz zmienić typ dla tego importu — zmiana dotyczy wszystkich elementów z danym kodem.
+          {data.codes.some((c) => !c.known) && <> Kody spoza słownika warto dodać w <a href="/ustawienia?tab=slownik" target="_blank" rel="noreferrer" className="underline text-ink">Ustawienia → Słownik elementów</a> i odczytać plik ponownie.</>}
+        </p>
       </section>
 
       {data.sites.length > 1 && (
@@ -160,8 +163,8 @@ function Preview({ data, onBack, onClose, onDone }) {
           <thead className="sticky top-0 bg-paper-2 z-10">
             <tr className="text-left font-mono text-[10.5px] uppercase tracking-[0.1em] text-muted">
               <th className="px-2 py-1.5 w-8"><input type="checkbox" className="accent-signal" checked={rows.every((r) => r.include)} onChange={(e) => setRows((rs) => rs.map((r) => ({ ...r, include: e.target.checked })))} aria-label="Zaznacz wszystkie" /></th>
-              <th className="px-2 py-1.5 w-20">Pętla/adr.</th><th className="px-2 py-1.5">Typ</th><th className="px-2 py-1.5">Lokalizacja</th>
-              <th className="px-2 py-1.5 w-20">Nr ser.</th>{data.sites.length > 1 && <th className="px-2 py-1.5 w-36">Obiekt</th>}<th className="px-2 py-1.5 w-24" />
+              <th className="px-2 py-1.5 w-20">Pętla/adr.</th><th className="px-2 py-1.5">Typ / symbol</th><th className="px-2 py-1.5">Lokalizacja</th>
+              <th className="px-2 py-1.5 w-28">Nr seryjny</th>{data.sites.length > 1 && <th className="px-2 py-1.5 w-36">Obiekt</th>}<th className="px-2 py-1.5 w-24" />
             </tr>
           </thead>
           <tbody>
@@ -171,9 +174,9 @@ function Preview({ data, onBack, onClose, onDone }) {
                 <tr key={r.key} className={`border-t border-line/70 ${!r.include || skip ? 'opacity-45' : ''}`}>
                   <td className="px-2 py-1"><input type="checkbox" className="accent-signal" checked={r.include} onChange={(e) => setRow(r.key, { include: e.target.checked })} /></td>
                   <td className="px-2 py-1 font-mono">L{r.loop_no ?? '—'}/{r.address_no}</td>
-                  <td className="px-2 py-1">{skip ? <span className="text-muted">pominięty</span> : types[r.code]}</td>
+                  <td className="px-2 py-1">{skip ? <span className="text-muted">pominięty</span> : <>{types[r.code]}{r.model && <div className="font-mono text-[11px] text-muted">{r.model}</div>}</>}</td>
                   <td className="px-2 py-1">{r.location || <span className="text-muted">—</span>}</td>
-                  <td className="px-2 py-1 font-mono text-[11.5px]">{r.serial || '—'}</td>
+                  <td className="px-2 py-1 font-mono text-[11.5px] whitespace-nowrap">{r.serial || '—'}</td>
                   {data.sites.length > 1 && <td className="px-2 py-1"><Select value={r.site_id} placeholder="— wybierz —" options={siteOpts} onChange={(e) => setRow(r.key, { site_id: e.target.value })} /></td>}
                   <td className="px-2 py-1 text-right">{exists(r) ? <Badge tone="warn">istnieje</Badge> : <Badge tone="ok">nowy</Badge>}</td>
                 </tr>
