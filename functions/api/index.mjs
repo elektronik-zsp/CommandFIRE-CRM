@@ -198,10 +198,14 @@ async function purgePhotos(where, params) {
 const panelSites = (panelId) => q(`SELECT s.id, s.name FROM panel_sites ps JOIN sites s ON s.id=ps.site_id
   WHERE ps.panel_id=$1 ORDER BY s.name`, [panelId]);
 
-async function setPanelSites(panel, ids) {
+async function checkPanelSites(clientId, ids) {
   const wanted = [...new Set((ids || []).map(Number).filter(Boolean))];
-  const own = await q('SELECT id FROM sites WHERE id = ANY($1) AND client_id=$2', [wanted, panel.client_id]);
+  const own = await q('SELECT id FROM sites WHERE id = ANY($1) AND client_id=$2', [wanted, clientId]);
   if (own.length !== wanted.length) throw new HttpError(400, 'Centrala może obsługiwać tylko obiekty tego samego klienta');
+  return wanted;
+}
+async function setPanelSites(panel, ids) {
+  const wanted = await checkPanelSites(panel.client_id, ids);
   await q('DELETE FROM panel_sites WHERE panel_id=$1 AND NOT (site_id = ANY($2))', [panel.id, wanted]);
   await q('INSERT INTO panel_sites (panel_id, site_id) SELECT $1, unnest($2::int[]) ON CONFLICT DO NOTHING', [panel.id, wanted]);
   return panelSites(panel.id);
@@ -526,6 +530,7 @@ const actions = {
     if (!p.client_id || !p.name?.trim()) throw new HttpError(400, 'Klient i nazwa centrali są wymagane');
     const before = p.id ? await one('SELECT * FROM panels WHERE id=$1', [p.id]) : null;
     if (before && before.client_id !== Number(p.client_id)) throw new HttpError(400, 'Centrali nie można przenieść do innego klienta');
+    if (p.site_ids) await checkPanelSites(Number(p.client_id), p.site_ids); // before writing anything
     const sitesBefore = before ? await panelSites(before.id) : [];
     const row = await save('panels', PANEL_COLS, p);
     const sitesAfter = p.site_ids ? await setPanelSites(row, p.site_ids) : sitesBefore;
