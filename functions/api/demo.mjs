@@ -66,6 +66,11 @@ export async function seedDemo({ q, one, user, checklist }) {
           [site.id, addDays(s.last), user.id, ti % 2 ? 'pozytywny' : 'pozytywny z uwagami', `PR/${new Date().getFullYear()}/${100 + site.id}`,
             JSON.stringify(checklist.map((x) => ({ ...x, state: 'ok' }))), ti % 2 ? null : 'Zalecana wymiana akumulatorów w ciągu 3 miesięcy.']);
       }
+      const plan = [-2, 3, 9, null, 16, 38][ti % 6];
+      if (plan != null) {
+        await q(`INSERT INTO inspections (site_id, scheduled_date, technician_id, status, checklist) VALUES ($1,$2,$3,'zaplanowany',$4)`,
+          [site.id, addDays(plan), user.id, JSON.stringify(checklist)]);
+      }
       const t = TICKETS[ti++ % TICKETS.length];
       await q(`INSERT INTO tickets (site_id, title, category, priority, status, assigned_to, reported_by, reported_at, resolution, resolved_at)
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
