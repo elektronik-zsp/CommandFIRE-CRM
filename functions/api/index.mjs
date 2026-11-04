@@ -68,7 +68,16 @@ async function save(table, columns, data) {
 
 // ---------- auth ----------
 
-const SECRET = crypto.createHash('sha256').update(`crm-ssp:${process.env.OPENKBS_API_KEY || 'dev'}`).digest();
+// Signing key lives in the database so tokens survive redeploys (the env API key rotates).
+let secret;
+async function getSecret() {
+  if (!secret) {
+    await q(`INSERT INTO app_settings (key, value) VALUES ('token_secret', $1) ON CONFLICT (key) DO NOTHING`,
+      [crypto.randomBytes(32).toString('hex')]);
+    secret = Buffer.from((await one(`SELECT value FROM app_settings WHERE key='token_secret'`)).value, 'hex');
+  }
+  return secret;
+}
 const TOKEN_TTL = 30 * 24 * 3600 * 1000;
 
 function hashPassword(pw) {
@@ -81,15 +90,15 @@ function checkPassword(pw, stored) {
   const test = crypto.scryptSync(pw, Buffer.from(salt, 'hex'), 32);
   return crypto.timingSafeEqual(test, Buffer.from(hash, 'hex'));
 }
-function sign(payload) {
+async function sign(payload) {
   const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
-  const mac = crypto.createHmac('sha256', SECRET).update(body).digest('base64url');
+  const mac = crypto.createHmac('sha256', await getSecret()).update(body).digest('base64url');
   return `${body}.${mac}`;
 }
-function verify(token) {
+async function verify(token) {
   const [body, mac] = String(token || '').split('.');
   if (!body || !mac) return null;
-  const expected = crypto.createHmac('sha256', SECRET).update(body).digest('base64url');
+  const expected = crypto.createHmac('sha256', await getSecret()).update(body).digest('base64url');
   if (mac.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(mac), Buffer.from(expected))) return null;
   const payload = JSON.parse(Buffer.from(body, 'base64url').toString());
   return payload.exp > Date.now() ? payload : null;
@@ -98,7 +107,7 @@ const publicUser = ({ password_hash, ...u }) => u;
 
 async function currentUser(event) {
   const h = event.headers?.authorization || event.headers?.Authorization || '';
-  const payload = verify(h.replace(/^Bearer\s+/i, ''));
+  const payload = await verify(h.replace(/^Bearer\s+/i, ''));
   if (!payload) throw new HttpError(401, 'Sesja wygasła — zaloguj się ponownie');
   const user = await one('SELECT * FROM users WHERE id=$1 AND active', [payload.uid]);
   if (!user) throw new HttpError(401, 'Konto nieaktywne');
@@ -155,7 +164,7 @@ const actions = {
   async 'auth.login'({ email, password }) {
     const user = await one('SELECT * FROM users WHERE lower(email)=lower($1) AND active', [email || '']);
     if (!user || !checkPassword(password || '', user.password_hash)) throw new HttpError(401, 'Nieprawidłowy e-mail lub hasło');
-    return { token: sign({ uid: user.id, exp: Date.now() + TOKEN_TTL }), user: publicUser(user) };
+    return { token: await sign({ uid: user.id, exp: Date.now() + TOKEN_TTL }), user: publicUser(user) };
   },
   async 'auth.me'(_, user) { return { user: publicUser(user) }; },
   async 'auth.changePassword'({ current, next }, user) {
