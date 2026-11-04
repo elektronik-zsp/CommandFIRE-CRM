@@ -58,7 +58,7 @@ export const deviceFields = [
   { name: 'notes', label: 'Uwagi', type: 'textarea', span: 2 },
 ];
 
-export const panelFields = [
+export const panelFields = (sites = []) => [
   { name: 'name', label: 'Nazwa', required: true, placeholder: 'np. Centrala główna / Podcentrala B' },
   { name: 'location', label: 'Lokalizacja', placeholder: 'np. Pomieszczenie ochrony, parter' },
   { name: 'manufacturer', label: 'Producent', list: PANEL_MANUFACTURERS },
@@ -66,6 +66,9 @@ export const panelFields = [
   { name: 'serial', label: 'Nr seryjny' },
   { name: 'installed_at', label: 'Data uruchomienia', type: 'date' },
   { name: 'installer', label: 'Instalator / uruchamiający', span: 2 },
+  { name: 'site_ids', label: 'Obsługiwane obiekty', type: 'checkboxes', span: 2, empty: 'Klient nie ma jeszcze obiektów',
+    options: sites.map((x) => ({ value: String(x.id), label: x.city ? `${x.name} (${x.city})` : x.name })),
+    hint: 'Zaznacz wszystkie obiekty klienta, które obsługuje ta centrala.' },
   { section: 'Konfiguracja' },
   { name: 'firmware', label: 'Wersja oprogramowania (firmware)' },
   { name: 'software_tool', label: 'Program serwisowy', placeholder: 'np. POLON-SERWIS 6000' },
@@ -119,6 +122,7 @@ export function clean(v) {
     if (out[k] === '') out[k] = null;
     else if (out[k] != null) out[k] = Number(out[k]);
   }
+  if (Array.isArray(out.site_ids)) out.site_ids = out.site_ids.map(Number);
   return out;
 }
 // Prepare a DB row for a form (ids → strings for selects)

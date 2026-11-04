@@ -3,7 +3,7 @@ const CLIENTS = [
   { name: 'Galeria Wisła Sp. z o.o.', nip: '5252812345', address: 'ul. Grochowska 207', city: 'Warszawa', contact_person: 'Anna Kowalczyk', phone: '+48 601 222 333', email: 'a.kowalczyk@galeriawisla.pl',
     sites: [
       { name: 'Galeria Wisła — budynek główny', address: 'ul. Grochowska 207', city: 'Warszawa', building_type: 'Handlowo-usługowy', panel_manufacturer: 'Polon-Alfa', panel_model: 'POLON 6000', system_type: 'adresowy', loops: 8, monitoring: true, monitoring_operator: 'Monitoring PSP — KM PSP Warszawa', contract_number: 'UK/2025/014', contract_end: 30, inspection_interval_months: 3, last: -95 },
-      { name: 'Parking podziemny P-1', address: 'ul. Grochowska 207', city: 'Warszawa', building_type: 'Garaż podziemny', panel_manufacturer: 'Polon-Alfa', panel_model: 'POLON 4900', system_type: 'adresowy', loops: 2, monitoring: true, monitoring_operator: 'Monitoring PSP — KM PSP Warszawa', contract_number: 'UK/2025/014', contract_end: 30, inspection_interval_months: 6, last: -150 },
+      { name: 'Parking podziemny P-1', address: 'ul. Grochowska 207', city: 'Warszawa', building_type: 'Garaż podziemny', panel_manufacturer: 'Polon-Alfa', panel_model: 'POLON 6000', system_type: 'adresowy', loops: 2, monitoring: true, monitoring_operator: 'Monitoring PSP — KM PSP Warszawa', contract_number: 'UK/2025/014', contract_end: 30, inspection_interval_months: 6, last: -150 },
     ] },
   { name: 'Szpital Powiatowy im. J. Strusia', nip: '7781234567', address: 'ul. Szpitalna 4', city: 'Poznań', contact_person: 'inż. Marek Nowicki', phone: '+48 61 845 11 00', email: 'techniczny@szpital-strusia.pl',
     sites: [
@@ -54,6 +54,7 @@ export async function seedDemo({ q, one, user, checklist }) {
   for (const c of CLIENTS) {
     const client = await one(`INSERT INTO clients (name, nip, address, city, contact_person, phone, email, demo)
       VALUES ($1,$2,$3,$4,$5,$6,$7,true) RETURNING id`, [c.name, c.nip, c.address, c.city, c.contact_person, c.phone, c.email]);
+    const siteIds = [];
     for (const s of c.sites) {
       const site = await one(`INSERT INTO sites (client_id, name, address, city, building_type, panel_manufacturer, panel_model, system_type, loops,
           monitoring, monitoring_operator, contract_number, contract_end, inspection_interval_months, last_inspection)
@@ -61,6 +62,7 @@ export async function seedDemo({ q, one, user, checklist }) {
         [client.id, s.name, s.address, s.city, s.building_type, s.panel_manufacturer, s.panel_model, s.system_type, s.loops,
           s.monitoring, s.monitoring_operator || null, s.contract_number || null, s.contract_end != null ? addDays(s.contract_end) : null,
           s.inspection_interval_months, s.last != null ? addDays(s.last) : null]);
+      siteIds.push(site.id);
       for (const d of DEVICES) {
         const dev = await one(`INSERT INTO devices (site_id, type, manufacturer, model, loop_no, location, quantity, installed_at, replace_by)
           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
@@ -71,15 +73,6 @@ export async function seedDemo({ q, one, user, checklist }) {
             VALUES ($1,'device',$2,$3,$4,$5,$6,$7,$8)`, [site.id, dev.id, `${d.type} — ${d.location}`, e.kind, e.summary, e.comment, addDays(e.days), user.id]);
         }
       }
-      const panel = await one(`INSERT INTO panels (site_id, name, manufacturer, model, serial, firmware, software_tool, installed_at, installer,
-          location, network_address, loops, zones, power_supply, batteries, transmission)
-        VALUES ($1,'Centrala główna',$2,$3,$4,$5,$6,$7,'Instal-Pożar Sp. z o.o.','Pomieszczenie ochrony, parter',$8,$9,$10,'Wbudowany 27,6 V / 5 A','2 × 12 V 17 Ah',$11) RETURNING id`,
-        [site.id, s.panel_manufacturer, s.panel_model, `${(s.panel_model || 'CP').replace(/\W/g, '').slice(0, 4).toUpperCase()}-${20190 + site.id * 37}`,
-          `v${3 + (site.id % 3)}.${site.id % 10}.${12 + site.id}`, PANEL_TOOLS[s.panel_manufacturer] || null, addDays(-2200),
-          s.monitoring ? `192.168.10.${20 + site.id}` : null, s.loops, s.loops * 6, s.monitoring ? `UTA → ${s.monitoring_operator}` : 'brak transmisji']);
-      await q(`INSERT INTO history (site_id, entity, entity_id, entity_label, kind, summary, comment, event_date, user_id)
-        VALUES ($1,'panel',$2,'Centrala główna','aktualizacja oprogramowania','Aktualizacja firmware centrali','Aktualizacja zalecana przez producenta, konfiguracja przeniesiona bez zmian.',$3,$4)`,
-        [site.id, panel.id, addDays(-400), user.id]);
       if (s.last != null) {
         await q(`INSERT INTO inspections (site_id, scheduled_date, performed_date, technician_id, status, result, protocol_number, checklist, findings)
           VALUES ($1,$2,$2,$3,'wykonany',$4,$5,$6,$7)`,
@@ -102,5 +95,19 @@ export async function seedDemo({ q, one, user, checklist }) {
       if (t.status !== 'nowe') await tlog('status', `Status: nowe → ${t.status}`, null, Math.min(t.days + 1, 0));
       if (t.comment) await tlog('komentarz', null, t.comment, Math.min(t.days + 1, 0));
     }
+    // one panel per client, serving all of its sites (installed in the first one)
+    const m = c.sites[0];
+    const panel = await one(`INSERT INTO panels (client_id, name, manufacturer, model, serial, firmware, software_tool, installed_at, installer,
+        location, network_address, loops, zones, power_supply, batteries, transmission)
+      VALUES ($1,'Centrala główna',$2,$3,$4,$5,$6,$7,'Instal-Pożar Sp. z o.o.',$8,$9,$10,$11,'Wbudowany 27,6 V / 5 A','2 × 12 V 17 Ah',$12) RETURNING id`,
+      [client.id, m.panel_manufacturer, m.panel_model, `${(m.panel_model || 'CP').replace(/\W/g, '').slice(0, 4).toUpperCase()}-${20190 + client.id * 37}`,
+        `v${3 + (client.id % 3)}.${client.id % 10}.${12 + client.id}`, PANEL_TOOLS[m.panel_manufacturer] || null, addDays(-2200),
+        `${m.name} — pomieszczenie ochrony, parter`, m.monitoring ? `192.168.10.${20 + client.id}` : null,
+        c.sites.reduce((a, x) => a + x.loops, 0), c.sites.reduce((a, x) => a + x.loops, 0) * 6,
+        m.monitoring ? `UTA → ${m.monitoring_operator}` : 'brak transmisji']);
+    await q('INSERT INTO panel_sites (panel_id, site_id) SELECT $1, unnest($2::int[])', [panel.id, siteIds]);
+    await q(`INSERT INTO history (site_id, entity, entity_id, entity_label, kind, summary, comment, event_date, user_id)
+      VALUES (NULL,'panel',$1,'Centrala główna','aktualizacja oprogramowania','Aktualizacja firmware centrali','Aktualizacja zalecana przez producenta, konfiguracja przeniesiona bez zmian.',$2,$3)`,
+      [panel.id, addDays(-400), user.id]);
   }
 }

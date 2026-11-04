@@ -103,9 +103,9 @@ function logEvent({ site_id, entity, entity_id, entity_label, kind, summary, cha
     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,COALESCE($9::date, current_date),$10) RETURNING *`,
   [site_id, entity, entity_id, entity_label, kind, summary || null, JSON.stringify(changes), comment || null, event_date || null, user?.id || null]);
 }
-// Record a create/update of a row; no entry when nothing changed.
-async function logChange(entity, before, row, cols, user) {
-  const changes = before ? await withNames(diff(before, row, cols)) : [];
+// Record a create/update of a row; no entry when nothing changed. `extra` = changes computed elsewhere.
+async function logChange(entity, before, row, cols, user, extra = []) {
+  const changes = [...(before ? await withNames(diff(before, row, cols)) : []), ...extra];
   if (before && !changes.length) return;
   const status = changes.find((c) => c.field === 'status');
   await logEvent({
@@ -138,7 +138,7 @@ const BUCKET = process.env.STORAGE_BUCKET;
 const MAX_FILE = 4 * 1024 * 1024; // function URL payload limit is 6 MB incl. base64 overhead
 
 async function purgeFiles(where, params) {
-  const rows = await q(`SELECT f.s3_key FROM panel_files f JOIN panels p ON p.id=f.panel_id JOIN sites s ON s.id=p.site_id WHERE ${where}`, params);
+  const rows = await q(`SELECT f.s3_key FROM panel_files f JOIN panels p ON p.id=f.panel_id WHERE ${where}`, params);
   await Promise.all(rows.map((r) => s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: r.s3_key }))
     .catch((e) => console.error('[s3] delete failed', r.s3_key, e.message))));
 }
@@ -158,7 +158,8 @@ async function savePhotos(entry, photos) {
   if (bufs.reduce((a, p) => a + p.full.length + p.small.length, 0) > MAX_PHOTO_BYTES) throw new HttpError(400, 'Zdjęcia są za duże — dodaj mniej zdjęć naraz');
   const saved = [];
   for (const p of bufs) {
-    const base = `photos/site-${entry.site_id}/h-${entry.id}/${crypto.randomBytes(8).toString('hex')}`;
+    const owner = entry.site_id ? `site-${entry.site_id}` : `${entry.entity}-${entry.entity_id}`;
+    const base = `photos/${owner}/h-${entry.id}/${crypto.randomBytes(8).toString('hex')}`;
     await Promise.all([
       s3.send(new PutObjectCommand({ Bucket: BUCKET, Key: `${base}.jpg`, Body: p.full, ContentType: 'image/jpeg' })),
       s3.send(new PutObjectCommand({ Bucket: BUCKET, Key: `${base}-thumb.jpg`, Body: p.small, ContentType: 'image/jpeg' })),
@@ -186,9 +187,36 @@ async function attachPhotos(rows) {
 
 async function purgePhotos(where, params) {
   const rows = await q(`SELECT p.s3_key, p.thumb_key FROM history_photos p JOIN history h ON h.id=p.history_id
-    JOIN sites s ON s.id=h.site_id WHERE ${where}`, params);
+    LEFT JOIN sites s ON s.id=h.site_id WHERE ${where}`, params);
   await Promise.all(rows.flatMap((r) => [r.s3_key, r.thumb_key]).map((Key) => s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key }))
     .catch((e) => console.error('[s3] delete failed', Key, e.message))));
+}
+
+// ---------- panels ↔ sites ----------
+
+// A panel belongs to a client and serves any number of that client's sites.
+const panelSites = (panelId) => q(`SELECT s.id, s.name FROM panel_sites ps JOIN sites s ON s.id=ps.site_id
+  WHERE ps.panel_id=$1 ORDER BY s.name`, [panelId]);
+
+async function setPanelSites(panel, ids) {
+  const wanted = [...new Set((ids || []).map(Number).filter(Boolean))];
+  const own = await q('SELECT id FROM sites WHERE id = ANY($1) AND client_id=$2', [wanted, panel.client_id]);
+  if (own.length !== wanted.length) throw new HttpError(400, 'Centrala może obsługiwać tylko obiekty tego samego klienta');
+  await q('DELETE FROM panel_sites WHERE panel_id=$1 AND NOT (site_id = ANY($2))', [panel.id, wanted]);
+  await q('INSERT INTO panel_sites (panel_id, site_id) SELECT $1, unnest($2::int[]) ON CONFLICT DO NOTHING', [panel.id, wanted]);
+  return panelSites(panel.id);
+}
+
+const siteNames = (list) => list.map((s) => s.name).join(', ') || null;
+const sitesChange = (before, after) => (siteNames(before) === siteNames(after) ? []
+  : [{ field: 'site_ids', label: 'Obsługiwane obiekty', from: siteNames(before), to: siteNames(after) }]);
+
+// Panels with their files and history belong to the client; `clientIds` is a SQL subquery or '$1'.
+async function purgeClientPanels(clientIds, params) {
+  const panelIds = `(SELECT id FROM panels WHERE client_id IN (${clientIds}))`;
+  await purgeFiles(`p.id IN ${panelIds}`, params);
+  await purgePhotos(`h.entity='panel' AND h.entity_id IN ${panelIds}`, params);
+  await q(`DELETE FROM history WHERE entity='panel' AND entity_id IN ${panelIds}`, params);
 }
 
 // ---------- auth ----------
@@ -281,10 +309,12 @@ const INSPECTION_COLS = ['site_id', 'type', 'scheduled_date', 'performed_date', 
   'protocol_number', 'checklist', 'findings', 'recommendations'];
 const TICKET_COLS = ['site_id', 'title', 'description', 'category', 'priority', 'status', 'assigned_to',
   'reported_by', 'due_date', 'resolution'];
-const PANEL_COLS = ['site_id', 'name', 'manufacturer', 'model', 'serial', 'firmware', 'software_tool', 'installed_at', 'installer',
+const PANEL_COLS = ['client_id', 'name', 'manufacturer', 'model', 'serial', 'firmware', 'software_tool', 'installed_at', 'installer',
   'location', 'network_address', 'loops', 'zones', 'power_supply', 'batteries', 'transmission', 'service_access', 'notes'];
 const PANEL_SELECT = `SELECT p.*, (SELECT count(*)::int FROM panel_files f WHERE f.panel_id=p.id) AS file_count,
-    (SELECT max(f.created_at) FROM panel_files f WHERE f.panel_id=p.id) AS last_file_at
+    (SELECT max(f.created_at) FROM panel_files f WHERE f.panel_id=p.id) AS last_file_at,
+    COALESCE((SELECT json_agg(json_build_object('id', s.id, 'name', s.name) ORDER BY s.name)
+      FROM panel_sites ps JOIN sites s ON s.id=ps.site_id WHERE ps.panel_id=p.id), '[]') AS sites
   FROM panels p`;
 const without = (cols, ...skip) => cols.filter((c) => !skip.includes(c));
 
@@ -367,7 +397,8 @@ const actions = {
     if (!client) throw new HttpError(404, 'Nie znaleziono klienta');
     const sites = await q(`${SITE_SELECT} WHERE s.client_id=$1 ORDER BY s.name`, [id]);
     const tickets = await q(`${TICKET_SELECT} WHERE c.id=$1 ORDER BY t.reported_at DESC LIMIT 20`, [id]);
-    return { client, sites, tickets };
+    const panels = await q(`${PANEL_SELECT} WHERE p.client_id=$1 ORDER BY p.name, p.id`, [id]);
+    return { client, sites, tickets, panels };
   },
   async 'clients.save'(p) {
     if (!p.name?.trim()) throw new HttpError(400, 'Nazwa klienta jest wymagana');
@@ -375,7 +406,7 @@ const actions = {
   },
   async 'clients.delete'({ id }, user) {
     requireAdmin(user);
-    await purgeFiles('s.client_id=$1', [id]);
+    await purgeClientPanels('$1', [id]);
     await purgePhotos('s.client_id=$1', [id]);
     await q('DELETE FROM clients WHERE id=$1', [id]);
     return { ok: true };
@@ -394,18 +425,27 @@ const actions = {
     const devices = await q('SELECT * FROM devices WHERE site_id=$1 ORDER BY loop_no NULLS FIRST, address_no NULLS FIRST, type, id', [id]);
     const inspections = await q(`${INSPECTION_SELECT} WHERE i.site_id=$1 ORDER BY COALESCE(i.performed_date, i.scheduled_date) DESC`, [id]);
     const tickets = await q(`${TICKET_SELECT} WHERE t.site_id=$1 ORDER BY t.reported_at DESC`, [id]);
-    const panels = await q(`${PANEL_SELECT} WHERE p.site_id=$1 ORDER BY p.id`, [id]);
-    const history = await attachPhotos(await q(`${HISTORY_SELECT} WHERE h.site_id=$1 AND h.entity IN ('device','panel')
+    const linked = '(SELECT panel_id FROM panel_sites WHERE site_id=$1)';
+    const panels = await q(`${PANEL_SELECT} WHERE p.id IN ${linked} ORDER BY p.id`, [id]);
+    // other panels of the same client that can be assigned to this site
+    const clientPanels = await q(`${PANEL_SELECT} WHERE p.client_id=$2 AND p.id NOT IN ${linked} ORDER BY p.name, p.id`, [id, site.client_id]);
+    // element entries of this site + entries of panels serving it (+ "panel deleted" notes left on the site)
+    const history = await attachPhotos(await q(`${HISTORY_SELECT}
+      WHERE (h.site_id=$1 AND h.entity IN ('device','panel')) OR (h.entity='panel' AND h.entity_id IN ${linked})
       ORDER BY h.event_date DESC, h.id DESC LIMIT 300`, [id]));
-    return { site, devices, inspections, tickets, panels, history };
+    const clientSites = await q('SELECT id, name, city FROM sites WHERE client_id=$1 ORDER BY name', [site.client_id]);
+    return { site, devices, inspections, tickets, panels, clientPanels, clientSites, history };
   },
   async 'sites.save'(p) {
     if (!p.name?.trim() || !p.client_id) throw new HttpError(400, 'Nazwa obiektu i klient są wymagane');
-    return save('sites', SITE_COLS, p);
+    const row = await save('sites', SITE_COLS, p);
+    // a site moved to another client can no longer be served by the old client's panels
+    await q('DELETE FROM panel_sites ps USING panels p WHERE p.id=ps.panel_id AND ps.site_id=$1 AND p.client_id<>$2', [row.id, row.client_id]);
+    return row;
   },
   async 'sites.delete'({ id }, user) {
     requireAdmin(user);
-    await purgeFiles('s.id=$1', [id]);
+    // panels stay with the client; only the link to this site goes (ON DELETE CASCADE)
     await purgePhotos('s.id=$1', [id]);
     await q('DELETE FROM sites WHERE id=$1', [id]);
     return { ok: true };
@@ -473,24 +513,52 @@ const actions = {
   async 'panels.get'({ id }) {
     const panel = await one(`${PANEL_SELECT} WHERE p.id=$1`, [id]);
     if (!panel) throw new HttpError(404, 'Nie znaleziono centrali');
-    const site = await one(`${SITE_SELECT} WHERE s.id=$1`, [panel.site_id]);
+    const client = await one('SELECT id, name FROM clients WHERE id=$1', [panel.client_id]);
+    const sites = await q(`${SITE_SELECT} WHERE s.id IN (SELECT site_id FROM panel_sites WHERE panel_id=$1) ORDER BY s.name`, [id]);
+    const clientSites = await q('SELECT id, name, city FROM sites WHERE client_id=$1 ORDER BY name', [panel.client_id]);
     const files = await q(`SELECT f.id, f.filename, f.mime, f.size, f.sha256, f.version, f.description, f.created_at, f.uploaded_by, u.name AS uploader_name
       FROM panel_files f LEFT JOIN users u ON u.id=f.uploaded_by WHERE f.panel_id=$1 ORDER BY f.created_at DESC`, [id]);
     const history = await attachPhotos(await q(`${HISTORY_SELECT} WHERE h.entity='panel' AND h.entity_id=$1 ORDER BY h.event_date DESC, h.id DESC`, [id]));
-    return { panel, site, files, history };
+    return { panel, client, sites, clientSites, files, history };
   },
+  // site_ids (optional): the full set of sites the panel serves
   async 'panels.save'(p, user) {
-    if (!p.site_id || !p.name?.trim()) throw new HttpError(400, 'Obiekt i nazwa centrali są wymagane');
+    if (!p.client_id || !p.name?.trim()) throw new HttpError(400, 'Klient i nazwa centrali są wymagane');
     const before = p.id ? await one('SELECT * FROM panels WHERE id=$1', [p.id]) : null;
+    if (before && before.client_id !== Number(p.client_id)) throw new HttpError(400, 'Centrali nie można przenieść do innego klienta');
+    const sitesBefore = before ? await panelSites(before.id) : [];
     const row = await save('panels', PANEL_COLS, p);
-    await logChange('panel', before, row, without(PANEL_COLS, 'site_id'), user);
+    const sitesAfter = p.site_ids ? await setPanelSites(row, p.site_ids) : sitesBefore;
+    await logChange('panel', before, row, without(PANEL_COLS, 'client_id'), user, sitesChange(sitesBefore, sitesAfter));
     return row;
+  },
+  async 'panels.linkSite'({ panel_id, site_id }, user) {
+    const panel = await one('SELECT * FROM panels WHERE id=$1', [panel_id]);
+    if (!panel) throw new HttpError(404, 'Nie znaleziono centrali');
+    const before = await panelSites(panel.id);
+    const after = await setPanelSites(panel, [...before.map((s) => s.id), site_id]);
+    await logChange('panel', panel, panel, [], user, sitesChange(before, after));
+    return { ok: true };
+  },
+  async 'panels.unlinkSite'({ panel_id, site_id }, user) {
+    const panel = await one('SELECT * FROM panels WHERE id=$1', [panel_id]);
+    if (!panel) throw new HttpError(404, 'Nie znaleziono centrali');
+    const before = await panelSites(panel.id);
+    const after = await setPanelSites(panel, before.map((s) => s.id).filter((x) => x !== Number(site_id)));
+    await logChange('panel', panel, panel, [], user, sitesChange(before, after));
+    return { ok: true };
   },
   async 'panels.delete'({ id }, user) {
     requireAdmin(user);
+    const sites = await panelSites(id);
     await purgeFiles('p.id=$1', [id]);
+    await purgePhotos(`h.entity='panel' AND h.entity_id=$1`, [id]);
+    await q(`DELETE FROM history WHERE entity='panel' AND entity_id=$1`, [id]);
     const row = await one('DELETE FROM panels WHERE id=$1 RETURNING *', [id]);
-    if (row) await logEvent({ site_id: row.site_id, entity: 'panel', entity_id: row.id, entity_label: ENTITY_LABEL.panel(row), kind: 'usunięcie', summary: 'Usunięto kartę centrali', user });
+    // leave a note in the operating log of every site the panel served
+    for (const s of row ? sites : []) {
+      await logEvent({ site_id: s.id, entity: 'panel', entity_id: row.id, entity_label: ENTITY_LABEL.panel(row), kind: 'usunięcie', summary: 'Usunięto kartę centrali', user });
+    }
     return { ok: true };
   },
   async 'panels.upload'({ panel_id, filename, mime, data, version, description }, user) {
@@ -503,12 +571,12 @@ const actions = {
     const sha256 = crypto.createHash('sha256').update(buf).digest('hex');
     const same = await one('SELECT id, version, filename, created_at FROM panel_files WHERE panel_id=$1 AND sha256=$2 ORDER BY created_at DESC LIMIT 1', [panel.id, sha256]);
     const safe = String(filename).normalize('NFKD').replace(/[^\w.-]+/g, '_').slice(-120);
-    const key = `configs/site-${panel.site_id}/panel-${panel.id}/${Date.now()}-${safe}`;
+    const key = `configs/client-${panel.client_id}/panel-${panel.id}/${Date.now()}-${safe}`;
     await s3.send(new PutObjectCommand({ Bucket: BUCKET, Key: key, Body: buf, ContentType: mime || 'application/octet-stream' }));
     const file = await one(`INSERT INTO panel_files (panel_id, filename, mime, size, sha256, s3_key, version, description, uploaded_by)
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id, filename, size, version, created_at`,
     [panel.id, filename, mime || null, buf.length, sha256, key, version || null, description || null, user.id]);
-    await logEvent({ site_id: panel.site_id, entity: 'panel', entity_id: panel.id, entity_label: ENTITY_LABEL.panel(panel), kind: 'plik',
+    await logEvent({ site_id: null, entity: 'panel', entity_id: panel.id, entity_label: ENTITY_LABEL.panel(panel), kind: 'plik',
       summary: `Wgrano plik konfiguracji: ${filename}${version ? ` (wersja ${version})` : ''}`, comment: description, user });
     return { file, same };
   },
@@ -522,12 +590,12 @@ const actions = {
     return { url };
   },
   async 'panels.deleteFile'({ id }, user) {
-    const f = await one('SELECT f.*, p.site_id, p.name, p.model FROM panel_files f JOIN panels p ON p.id=f.panel_id WHERE f.id=$1', [id]);
+    const f = await one('SELECT f.*, p.name, p.model FROM panel_files f JOIN panels p ON p.id=f.panel_id WHERE f.id=$1', [id]);
     if (!f) return { ok: true };
     if (f.uploaded_by !== user.id && user.role !== 'admin') throw new HttpError(403, 'Plik może usunąć autor lub administrator');
     await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: f.s3_key }));
     await q('DELETE FROM panel_files WHERE id=$1', [id]);
-    await logEvent({ site_id: f.site_id, entity: 'panel', entity_id: f.panel_id, entity_label: ENTITY_LABEL.panel(f), kind: 'plik',
+    await logEvent({ site_id: null, entity: 'panel', entity_id: f.panel_id, entity_label: ENTITY_LABEL.panel(f), kind: 'plik',
       summary: `Usunięto plik konfiguracji: ${f.filename}${f.version ? ` (wersja ${f.version})` : ''}`, user });
     return { ok: true };
   },
@@ -612,7 +680,7 @@ const actions = {
   },
   async 'demo.clear'(_, user) {
     requireAdmin(user);
-    await purgeFiles('s.client_id IN (SELECT id FROM clients WHERE demo)', []);
+    await purgeClientPanels('SELECT id FROM clients WHERE demo', []);
     await purgePhotos('s.client_id IN (SELECT id FROM clients WHERE demo)', []);
     await q('DELETE FROM clients WHERE demo');
     return { ok: true };

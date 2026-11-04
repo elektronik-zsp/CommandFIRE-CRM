@@ -1,15 +1,17 @@
 import { useState } from 'react';
 import { useNavigate, useParams, Link, useSearchParams } from 'react-router-dom';
-import { Pencil, Plus, ArrowLeft, CalendarPlus, Siren, Radio, Phone, CircuitBoard, FileCode2, ChevronRight } from 'lucide-react';
+import { Pencil, Plus, ArrowLeft, CalendarPlus, Siren, Radio, Phone, CircuitBoard, Link2 } from 'lucide-react';
 import { api } from '../api';
 import { useAuth } from '../auth';
-import { useApi, Card, Table, PageHeader, Button, FormModal, Spinner, ErrorBox, KV, Badge, Tabs, Empty } from '../ui';
-import { siteFields, panelFields, clean, toForm } from '../forms';
+import { useApi, Card, Table, PageHeader, Button, FormModal, Spinner, ErrorBox, KV, Badge, Tabs, Empty, Select } from '../ui';
+import { siteFields, clean, toForm } from '../forms';
 import { fmtDate, fmtDateTime, daysUntil, relDays, dueTone } from '../format';
 import TicketModal from '../components/TicketModal';
 import ScheduleModal from '../components/ScheduleModal';
 import DeviceModal from '../components/DeviceModal';
 import { HistoryList } from '../components/History';
+import PanelModal from '../components/PanelModal';
+import PanelCard from '../components/PanelCard';
 
 const INTERVAL = { 1: 'co miesiąc', 3: 'co kwartał', 6: 'co pół roku', 12: 'raz w roku' };
 
@@ -25,7 +27,7 @@ export default function SiteDetail() {
 
   if (error) return <ErrorBox>{error}</ErrorBox>;
   if (!data) return <Spinner />;
-  const { site, devices, inspections, tickets, panels, history } = data;
+  const { site, devices, inspections, tickets, panels, clientPanels, clientSites, history } = data;
   const n = daysUntil(site.next_due);
   const totalElements = devices.reduce((a, d) => a + (d.quantity || 1), 0);
   const byType = Object.entries(devices.reduce((acc, d) => ({ ...acc, [d.type]: (acc[d.type] || 0) + (d.quantity || 1) }), {})).sort((a, b) => b[1] - a[1]);
@@ -47,8 +49,14 @@ export default function SiteDetail() {
     if (h.entity === 'device') { const d = devices.find((x) => x.id === h.entity_id); if (d) setModal({ device: d, tab: 'historia' }); }
   };
   const newPanel = () => setModal({ panel: {
-    site_id: site.id, name: panels.length ? '' : 'Centrala główna', manufacturer: site.panel_manufacturer, model: site.panel_model, loops: site.loops,
+    client_id: site.client_id, site_ids: [site.id], name: panels.length ? '' : 'Centrala główna',
+    manufacturer: site.panel_manufacturer, model: site.panel_model, loops: site.loops,
   } });
+  async function unlinkPanel(p) {
+    if (!confirm(`Odłączyć centralę „${p.name}” od obiektu „${site.name}”?\nKarta centrali, pliki konfiguracji i historia zostają u klienta.`)) return;
+    try { await api('panels.unlinkSite', { panel_id: p.id, site_id: site.id }); reload(); } catch (e) { alert(e.message); }
+  }
+  const mainPanel = panels[0];
 
   return (
     <>
@@ -67,7 +75,7 @@ export default function SiteDetail() {
         </div>
         <div className="px-4 py-3">
           <div className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-muted">Centrala</div>
-          <button onClick={() => setParams({ tab: 'centrala' })} className="block max-w-full font-display text-[22px] font-semibold mt-0.5 truncate hover:text-signal cursor-pointer">{[site.panel_manufacturer, site.panel_model].filter(Boolean).join(' ') || '—'}</button>
+          <button onClick={() => setParams({ tab: 'centrala' })} className="block max-w-full font-display text-[22px] font-semibold mt-0.5 truncate hover:text-signal cursor-pointer">{(mainPanel ? [mainPanel.manufacturer, mainPanel.model] : [site.panel_manufacturer, site.panel_model]).filter(Boolean).join(' ') || '—'}{panels.length > 1 && <span className="text-[14px] text-muted font-sans"> +{panels.length - 1}</span>}</button>
         </div>
         <div className="px-4 py-3">
           <div className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-muted">Elementy</div>
@@ -115,34 +123,19 @@ export default function SiteDetail() {
 
       {tab === 'centrala' && (
         <div className="flex flex-col gap-3">
-          {panels.length === 0 ? (
+          {panels.length === 0 && (
             <Card><Empty icon={CircuitBoard}>
-              <span>Ten obiekt nie ma jeszcze karty centrali.</span>
-              <Button icon={Plus} onClick={newPanel} className="mt-2">Utwórz kartę centrali</Button>
+              <span>Ten obiekt nie ma jeszcze przypisanej centrali.</span>
+              {clientPanels.length > 0 && <span className="text-[12.5px]">Możesz utworzyć nową kartę albo przypisać centralę, która obsługuje już inny obiekt klienta.</span>}
             </Empty></Card>
-          ) : (
-            <>
-              {panels.map((p) => (
-                <Link key={p.id} to={`/centrale/${p.id}`} className="reveal group grid sm:grid-cols-[auto_1fr_auto] items-center gap-4 bg-white border border-line rounded-[3px] px-4 py-3.5 hover:border-ink transition-colors">
-                  <span className="w-11 h-11 flex items-center justify-center bg-ink text-white rounded-[3px]"><CircuitBoard size={20} /></span>
-                  <div className="min-w-0">
-                    <div className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-muted">{p.name}{p.location ? ` · ${p.location}` : ''}</div>
-                    <div className="font-display text-[22px] font-semibold leading-tight">{[p.manufacturer, p.model].filter(Boolean).join(' ') || '—'}</div>
-                    <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-[12.5px] text-ink-3 font-mono">
-                      <span>SN {p.serial || '—'}</span><span>FW {p.firmware || '—'}</span><span>{p.loops ?? '—'} pętli / {p.zones ?? '—'} stref</span>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span className={`inline-flex items-center gap-1.5 text-[12.5px] ${p.file_count ? 'text-ink' : 'text-signal'}`}>
-                      <FileCode2 size={15} />{p.file_count ? `${p.file_count} pl. konfiguracji · ${fmtDate(p.last_file_at)}` : 'brak pliku konfiguracji'}
-                    </span>
-                    <ChevronRight size={18} className="text-muted group-hover:text-signal" />
-                  </div>
-                </Link>
-              ))}
-              <div><Button variant="ghost" icon={Plus} onClick={newPanel}>Dodaj kolejną centralę</Button></div>
-            </>
           )}
+          {panels.map((p) => <PanelCard key={p.id} panel={p} siteId={site.id} onUnlink={unlinkPanel} />)}
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant={panels.length ? 'ghost' : 'primary'} icon={Plus} onClick={newPanel}>{panels.length ? 'Dodaj kolejną centralę' : 'Utwórz kartę centrali'}</Button>
+            {clientPanels.length > 0 && (
+              <AssignPanel panels={clientPanels} onAssign={async (panelId) => { await api('panels.linkSite', { panel_id: panelId, site_id: site.id }); reload(); }} />
+            )}
+          </div>
         </div>
       )}
 
@@ -200,11 +193,27 @@ export default function SiteDetail() {
       )}
       {modal === 'schedule' && <ScheduleModal initial={{ site_id: site.id, scheduled_date: site.next_due || '' }} onClose={() => setModal(null)} onSaved={reload} />}
       {modal?.device && <DeviceModal device={modal.device} initialTab={modal.tab} onClose={() => setModal(null)} onSaved={reload} />}
-      {modal?.panel && (
-        <FormModal wide title="Nowa karta centrali" fields={panelFields} initial={modal.panel} onClose={() => setModal(null)}
-          onSubmit={async (v) => { const p = await api('panels.save', clean(v)); nav(`/centrale/${p.id}`); }} />
-      )}
+      {modal?.panel && <PanelModal panel={modal.panel} sites={clientSites} onClose={() => setModal(null)} onSaved={(p) => nav(`/centrale/${p.id}`)} />}
       {modal?.ticket && <TicketModal ticket={modal.ticket} onClose={() => setModal(null)} onSaved={reload} />}
     </>
+  );
+}
+
+// Assign a panel that already serves another site of the same client.
+function AssignPanel({ panels, onAssign }) {
+  const [id, setId] = useState('');
+  const [busy, setBusy] = useState(false);
+  const label = (p) => `${[p.manufacturer, p.model].filter(Boolean).join(' ') || p.name}${p.sites.length ? ` — ${p.sites.map((s) => s.name).join(', ')}` : ''}`;
+  async function assign() {
+    setBusy(true);
+    try { await onAssign(Number(id)); setId(''); } catch (e) { alert(e.message); }
+    setBusy(false);
+  }
+  return (
+    <span className="flex items-center gap-2">
+      <Select value={id} onChange={(e) => setId(e.target.value)} placeholder="Centrala innego obiektu klienta…" className="w-80"
+        options={panels.map((p) => ({ value: String(p.id), label: label(p) }))} />
+      <Button variant="dark" icon={Link2} disabled={!id} loading={busy} onClick={assign}>Przypisz</Button>
+    </span>
   );
 }

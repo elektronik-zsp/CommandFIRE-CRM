@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import { useNavigate, useParams, Link } from 'react-router-dom';
-import { Pencil, Plus, ArrowLeft, Phone, Mail } from 'lucide-react';
+import { Pencil, Plus, ArrowLeft, Phone, Mail, CircuitBoard, FileCode2 } from 'lucide-react';
 import { api } from '../api';
 import { useAuth } from '../auth';
 import { useApi, Card, Table, PageHeader, Button, FormModal, Spinner, ErrorBox, KV, Badge } from '../ui';
 import { clientFields, siteFields, clean, toForm } from '../forms';
 import { fmtDate, fmtDateTime, daysUntil, relDays, dueTone } from '../format';
+import PanelModal from '../components/PanelModal';
 
 export default function ClientDetail() {
   const { id } = useParams();
@@ -16,7 +17,7 @@ export default function ClientDetail() {
 
   if (error) return <ErrorBox>{error}</ErrorBox>;
   if (!data) return <Spinner />;
-  const { client, sites, tickets } = data;
+  const { client, sites, tickets, panels } = data;
 
   return (
     <>
@@ -45,6 +46,23 @@ export default function ClientDetail() {
               { key: 'next_due', label: 'Następny przegląd', render: (s) => s.next_due ? <div><div className="font-mono text-[12.5px]">{fmtDate(s.next_due)}</div><Badge tone={dueTone(daysUntil(s.next_due))}>{relDays(daysUntil(s.next_due))}</Badge></div> : <span className="text-muted">nie zaplanowano</span> },
             ]} />
           </Card>
+          <Card title={`Centrale (${panels.length})`} pad={false} className="reveal"
+            actions={<Button variant="ghost" icon={Plus} onClick={() => setModal('panel')} disabled={!sites.length} title={sites.length ? undefined : 'Najpierw dodaj obiekt'}>Dodaj centralę</Button>}>
+            <Table rows={panels} empty="Brak kart central" onRow={(p) => nav(`/centrale/${p.id}`)} columns={[
+              { key: 'model', label: 'Centrala', render: (p) => (
+                <div className="flex items-center gap-2.5">
+                  <CircuitBoard size={16} className="text-muted shrink-0" />
+                  <div><div className="font-medium">{[p.manufacturer, p.model].filter(Boolean).join(' ') || p.name}</div><div className="text-[12px] text-muted">{p.name}{p.serial ? ` · SN ${p.serial}` : ''}</div></div>
+                </div>
+              ) },
+              { key: 'sites', label: 'Obsługuje obiekty', render: (p) => p.sites.length
+                ? <div className="text-[12.5px]">{p.sites.map((s) => s.name).join(', ')}</div>
+                : <Badge tone="warn">brak obiektu</Badge> },
+              { key: 'files', label: 'Konfiguracja', className: 'hidden md:table-cell', render: (p) => p.file_count
+                ? <span className="inline-flex items-center gap-1 text-[12.5px]"><FileCode2 size={14} />{fmtDate(p.last_file_at)}</span>
+                : <span className="text-[12.5px] text-signal">brak pliku</span> },
+            ]} />
+          </Card>
           <Card title="Ostatnie zgłoszenia" pad={false} className="reveal">
             <Table rows={tickets} empty="Brak zgłoszeń" onRow={(t) => nav(`/zgloszenia?id=${t.id}`)} columns={[
               { key: 'reported_at', label: 'Data', className: 'w-36', render: (t) => <span className="font-mono text-[12px]">{fmtDateTime(t.reported_at)}</span> },
@@ -60,6 +78,10 @@ export default function ClientDetail() {
         <FormModal title="Edycja klienta" fields={clientFields} initial={client} onClose={() => setModal(null)}
           onSubmit={async (v) => { await api('clients.save', v); reload(); }}
           onDelete={user.role === 'admin' ? async () => { await api('clients.delete', { id: client.id }); nav('/klienci'); } : undefined} />
+      )}
+      {modal === 'panel' && (
+        <PanelModal panel={{ client_id: client.id, name: panels.length ? '' : 'Centrala główna', site_ids: panels.length ? [] : sites.map((s) => s.id) }} sites={sites}
+          onClose={() => setModal(null)} onSaved={(p) => nav(`/centrale/${p.id}`)} />
       )}
       {modal === 'site' && (
         <FormModal wide title="Nowy obiekt" fields={siteFields([client])} initial={toForm({ client_id: client.id, inspection_interval_months: 6, city: client.city, system_type: 'adresowy' })}

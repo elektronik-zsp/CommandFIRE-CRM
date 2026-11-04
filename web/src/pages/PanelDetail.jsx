@@ -1,11 +1,11 @@
 import { useRef, useState } from 'react';
 import { useNavigate, useParams, Link } from 'react-router-dom';
-import { ArrowLeft, Pencil, Printer, Upload, Download, Trash2, FileCode2, CircuitBoard } from 'lucide-react';
+import { ArrowLeft, Pencil, Printer, Upload, Download, Trash2, FileCode2, CircuitBoard, Building2, ChevronRight } from 'lucide-react';
 import { api } from '../api';
 import { useAuth } from '../auth';
-import { useApi, Card, PageHeader, Button, FormModal, Spinner, ErrorBox, KV, Badge, Field, Input, Empty } from '../ui';
-import { panelFields, clean } from '../forms';
-import { fmtDate, fmtDateTime, fmtSize, PANEL_EVENT_KINDS } from '../format';
+import { useApi, Card, PageHeader, Button, Spinner, ErrorBox, KV, Badge, Field, Input, Empty } from '../ui';
+import { fmtDate, fmtDateTime, fmtSize, daysUntil, relDays, dueTone, PANEL_EVENT_KINDS } from '../format';
+import PanelModal from '../components/PanelModal';
 import { HistoryList, AddEntry } from '../components/History';
 
 const MAX_FILE = 4 * 1024 * 1024;
@@ -26,12 +26,12 @@ export default function PanelDetail() {
 
   if (error) return <ErrorBox>{error}</ErrorBox>;
   if (!data) return <Spinner />;
-  const { panel, site, files, history } = data;
+  const { panel, client, sites, clientSites, files, history } = data;
 
   return (
     <>
-      <Link to={`/obiekty/${site.id}?tab=centrala`} className="no-print inline-flex items-center gap-1 text-[12px] text-muted hover:text-ink mb-3"><ArrowLeft size={13} />{site.name}</Link>
-      <PageHeader kicker={`Karta centrali · ${site.name} · ${site.client_name}`} title={[panel.manufacturer, panel.model].filter(Boolean).join(' ') || panel.name}>
+      <Link to={`/klienci/${client.id}`} className="no-print inline-flex items-center gap-1 text-[12px] text-muted hover:text-ink mb-3"><ArrowLeft size={13} />{client.name}</Link>
+      <PageHeader kicker={`Karta centrali · ${client.name}`} title={[panel.manufacturer, panel.model].filter(Boolean).join(' ') || panel.name}>
         <span className="no-print flex gap-2">
           <Button variant="ghost" icon={Printer} onClick={() => window.print()}>Drukuj kartę</Button>
           <Button variant="dark" icon={Pencil} onClick={() => setEditing(true)}>Edytuj</Button>
@@ -68,6 +68,37 @@ export default function PanelDetail() {
             </div>
           </Card>
 
+          <Card title={<span className="flex items-center gap-2"><Building2 size={16} />Obsługiwane obiekty</span>} pad={false} className="reveal"
+            actions={<span className="font-mono text-[11.5px] text-muted">{sites.length} z {clientSites.length} obiektów klienta</span>}>
+            {sites.length === 0 ? (
+              <Empty icon={Building2}>
+                <span>Centrala nie jest przypisana do żadnego obiektu.</span>
+                <Button variant="ghost" icon={Pencil} className="mt-2 no-print" onClick={() => setEditing(true)}>Wybierz obiekty</Button>
+              </Empty>
+            ) : (
+              <ul>
+                {sites.map((s) => {
+                  const n = daysUntil(s.next_due);
+                  return (
+                    <li key={s.id} className="border-b border-line/70 last:border-0">
+                      <Link to={`/obiekty/${s.id}`} className="group flex items-center gap-3 px-4 py-2.5 hover:bg-paper/70">
+                        <div className="min-w-0 flex-1">
+                          <div className="font-medium text-[13.5px]">{s.name}</div>
+                          <div className="text-[12px] text-muted">{[s.address, s.city].filter(Boolean).join(', ') || '—'} · {s.device_count} el.</div>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <div className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-muted">Przegląd</div>
+                          {s.next_due ? <Badge tone={dueTone(n)} dot={n < 0}>{fmtDate(s.next_due)} · {relDays(n)}</Badge> : <span className="text-[12px] text-muted">nie zaplanowano</span>}
+                        </div>
+                        <ChevronRight size={16} className="text-muted group-hover:text-signal no-print" />
+                      </Link>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </Card>
+
           <ConfigFiles panel={panel} files={files} user={user} onChanged={reload} />
         </div>
 
@@ -83,9 +114,8 @@ export default function PanelDetail() {
       </div>
 
       {editing && (
-        <FormModal wide title="Edycja karty centrali" fields={panelFields} initial={panel} onClose={() => setEditing(false)}
-          onSubmit={async (v) => { await api('panels.save', clean(v)); reload(); }}
-          onDelete={user.role === 'admin' ? async () => { await api('panels.delete', { id: panel.id }); nav(`/obiekty/${site.id}?tab=centrala`); } : undefined} />
+        <PanelModal panel={{ ...panel, sites }} sites={clientSites} onClose={() => setEditing(false)} onSaved={reload}
+          onDelete={user.role === 'admin' ? async () => { await api('panels.delete', { id: panel.id }); nav(`/klienci/${client.id}`); } : undefined} />
       )}
     </>
   );

@@ -109,10 +109,11 @@ CREATE TABLE IF NOT EXISTS tickets (
 );
 CREATE INDEX IF NOT EXISTS tickets_site_idx ON tickets(site_id);
 
--- Control panel record ("karta centrali"); a site may have several networked panels.
+-- Control panel record ("karta centrali"). A panel belongs to a client and may serve several
+-- of its sites (panel_sites); a site may also have several networked panels.
 CREATE TABLE IF NOT EXISTS panels (
   id SERIAL PRIMARY KEY,
-  site_id INT NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+  client_id INT REFERENCES clients(id) ON DELETE CASCADE,
   name TEXT NOT NULL DEFAULT 'Centrala główna',
   manufacturer TEXT,
   model TEXT,
@@ -132,7 +133,12 @@ CREATE TABLE IF NOT EXISTS panels (
   notes TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX IF NOT EXISTS panels_site_idx ON panels(site_id);
+CREATE TABLE IF NOT EXISTS panel_sites (
+  panel_id INT NOT NULL REFERENCES panels(id) ON DELETE CASCADE,
+  site_id INT NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+  PRIMARY KEY (panel_id, site_id)
+);
+CREATE INDEX IF NOT EXISTS panel_sites_site_idx ON panel_sites(site_id);
 
 -- Configuration file versions; the bytes live in private object storage.
 CREATE TABLE IF NOT EXISTS panel_files (
@@ -151,9 +157,10 @@ CREATE TABLE IF NOT EXISTS panel_files (
 CREATE INDEX IF NOT EXISTS panel_files_panel_idx ON panel_files(panel_id);
 
 -- Change log for devices, tickets and panels. entity_id has no FK so entries survive deletion.
+-- site_id is NULL for panel entries: they belong to the panel, which may serve several sites.
 CREATE TABLE IF NOT EXISTS history (
   id SERIAL PRIMARY KEY,
-  site_id INT NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+  site_id INT REFERENCES sites(id) ON DELETE CASCADE,
   entity TEXT NOT NULL,
   entity_id INT NOT NULL,
   entity_label TEXT,
@@ -167,6 +174,21 @@ CREATE TABLE IF NOT EXISTS history (
 );
 CREATE INDEX IF NOT EXISTS history_entity_idx ON history(entity, entity_id);
 CREATE INDEX IF NOT EXISTS history_site_idx ON history(site_id);
+
+-- Migration: panels used to belong to a single site (panels.site_id).
+ALTER TABLE panels ADD COLUMN IF NOT EXISTS client_id INT REFERENCES clients(id) ON DELETE CASCADE;
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='panels' AND column_name='site_id') THEN
+    UPDATE panels p SET client_id = s.client_id FROM sites s WHERE s.id = p.site_id AND p.client_id IS NULL;
+    INSERT INTO panel_sites (panel_id, site_id) SELECT id, site_id FROM panels WHERE site_id IS NOT NULL ON CONFLICT DO NOTHING;
+    ALTER TABLE panels DROP COLUMN site_id;
+  END IF;
+END $$;
+ALTER TABLE panels ALTER COLUMN client_id SET NOT NULL;
+CREATE INDEX IF NOT EXISTS panels_client_idx ON panels(client_id);
+ALTER TABLE history ALTER COLUMN site_id DROP NOT NULL;
+-- panel entries belong to the panel; only "panel deleted" notes stay attached to the sites it served
+UPDATE history SET site_id = NULL WHERE entity = 'panel' AND kind <> 'usunięcie' AND site_id IS NOT NULL;
 
 -- Photos attached to a history entry (resized in the browser; full image + thumbnail in private storage).
 CREATE TABLE IF NOT EXISTS history_photos (

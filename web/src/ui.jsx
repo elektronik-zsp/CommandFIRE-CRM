@@ -209,6 +209,20 @@ export function RecordForm({ fields, initial = {}, onSubmit, onClose, onDelete, 
           let input;
           if (f.type === 'textarea') input = <textarea {...common} rows={f.rows || 3} className={`${INPUT} w-full h-auto py-2 resize-y`} />;
           else if (f.type === 'select') input = <Select {...common} options={f.options} placeholder={f.required ? undefined : '—'} />;
+          else if (f.type === 'checkboxes') {
+            const sel = (values[f.name] || []).map(String);
+            const toggle = (val) => set(f.name, sel.includes(val) ? sel.filter((x) => x !== val) : [...sel, val]);
+            input = f.options.length === 0 ? <span className="text-[13px] text-muted h-9 flex items-center">{f.empty || 'Brak pozycji do wyboru'}</span> : (
+              <div className="grid sm:grid-cols-2 gap-x-4 gap-y-1.5 p-2.5 border border-line rounded-[3px] bg-paper/40">
+                {f.options.map((o) => (
+                  <label key={o.value} className="flex items-start gap-2 text-[13px] cursor-pointer">
+                    <input type="checkbox" checked={sel.includes(String(o.value))} onChange={() => toggle(String(o.value))} className="mt-0.5 w-4 h-4 accent-signal shrink-0" />
+                    <span>{o.label}</span>
+                  </label>
+                ))}
+              </div>
+            );
+          }
           else if (f.type === 'checkbox') input = (
             <span className="flex items-center gap-2 h-9">
               <input type="checkbox" checked={!!values[f.name]} onChange={(e) => set(f.name, e.target.checked)} className="w-4 h-4 accent-signal" />
