@@ -47,6 +47,7 @@
 @media print {
   .no-print { display: none !important; }
   body { background: white; font-size: 11px; }
+  .grid-bg { background-image: none !important; }
   .print-sheet { box-shadow: none !important; border: none !important; padding: 0 !important; max-width: none !important; }
   @page { margin: 14mm; }
 }
