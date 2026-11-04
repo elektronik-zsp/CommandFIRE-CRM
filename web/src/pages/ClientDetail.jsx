@@ -41,7 +41,10 @@ export default function ClientDetail() {
           <Card title={`Obiekty (${sites.length})`} pad={false} className="reveal">
             <Table rows={sites} empty="Klient nie ma jeszcze obiektów" onRow={(s) => nav(`/obiekty/${s.id}`)} columns={[
               { key: 'name', label: 'Obiekt', render: (s) => <div><div className="font-medium">{s.name}</div><div className="text-[12px] text-muted">{[s.address, s.city].filter(Boolean).join(', ')}</div></div> },
-              { key: 'panel', label: 'Centrala', className: 'hidden md:table-cell', render: (s) => [s.panel_manufacturer, s.panel_model].filter(Boolean).join(' ') || '—' },
+              { key: 'panel', label: 'Centrala', className: 'hidden md:table-cell', render: (s) => {
+                const served = panels.filter((p) => p.sites.some((x) => x.id === s.id)).map((p) => [p.manufacturer, p.model].filter(Boolean).join(' ') || p.name);
+                return served.join(', ') || [s.panel_manufacturer, s.panel_model].filter(Boolean).join(' ') || '—';
+              } },
               { key: 'device_count', label: 'Elementy', className: 'text-right hidden sm:table-cell', render: (s) => <span className="font-mono">{s.device_count}</span> },
               { key: 'next_due', label: 'Następny przegląd', render: (s) => s.next_due ? <div><div className="font-mono text-[12.5px]">{fmtDate(s.next_due)}</div><Badge tone={dueTone(daysUntil(s.next_due))}>{relDays(daysUntil(s.next_due))}</Badge></div> : <span className="text-muted">nie zaplanowano</span> },
             ]} />
