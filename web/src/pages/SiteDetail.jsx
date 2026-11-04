@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate, useParams, Link, useSearchParams } from 'react-router-dom';
-import { Pencil, Plus, ArrowLeft, CalendarPlus, Siren, Radio, Phone, Mail, CircuitBoard, Link2 } from 'lucide-react';
+import { Pencil, Plus, ArrowLeft, CalendarPlus, Siren, Radio, Phone, Mail, CircuitBoard, Link2, FileInput } from 'lucide-react';
 import { api } from '../api';
 import { useAuth } from '../auth';
 import { useApi, Card, Table, PageHeader, Button, FormModal, Spinner, ErrorBox, KV, Badge, Tabs, Empty, Select } from '../ui';
@@ -12,6 +12,7 @@ import DeviceModal from '../components/DeviceModal';
 import { HistoryList } from '../components/History';
 import PanelModal from '../components/PanelModal';
 import PanelCard from '../components/PanelCard';
+import ImportDevicesModal from '../components/ImportDevicesModal';
 
 const INTERVAL = { 1: 'co miesiąc', 3: 'co kwartał', 6: 'co pół roku', 12: 'raz w roku' };
 
@@ -157,7 +158,7 @@ export default function SiteDetail() {
       )}
 
       {tab === 'urzadzenia' && (
-        <Card pad={false} title="Ewidencja elementów SSP" actions={can('devices.edit') && <Button icon={Plus} onClick={() => setModal({ device: { site_id: site.id, status: 'sprawne', quantity: 1, manufacturer: site.panel_manufacturer } })}>Dodaj element</Button>}>
+        <Card pad={false} title="Ewidencja elementów SSP" actions={can('devices.edit') && <span className="flex gap-2">{panels.length > 0 && can('configs.download') && <Button variant="ghost" icon={FileInput} onClick={() => setModal('import')}>Import z centrali</Button>}<Button icon={Plus} onClick={() => setModal({ device: { site_id: site.id, status: 'sprawne', quantity: 1, manufacturer: site.panel_manufacturer } })}>Dodaj element</Button></span>}>
           {byType.length > 0 && (
             <div className="flex flex-wrap gap-2 px-4 py-3 border-b border-line bg-paper/40">
               {byType.map(([t, c]) => <span key={t} className="text-[12px] px-2 py-0.5 bg-white border border-line rounded-[2px]">{t} <b className="font-mono">{c}</b></span>)}
@@ -209,6 +210,7 @@ export default function SiteDetail() {
           onDelete={can('sites.delete') ? async () => { await api('sites.delete', { id: site.id }); nav(`/klienci/${site.client_id}`); } : undefined} />
       )}
       {modal === 'schedule' && <ScheduleModal initial={{ site_id: site.id, scheduled_date: site.next_due || '' }} onClose={() => setModal(null)} onSaved={reload} />}
+      {modal === 'import' && <ImportDevicesModal panels={panels} onClose={() => setModal(null)} onDone={reload} />}
       {modal?.device && <DeviceModal device={modal.device} initialTab={modal.tab} onClose={() => setModal(null)} onSaved={reload} />}
       {modal?.panel && <PanelModal panel={modal.panel} sites={clientSites} onClose={() => setModal(null)} onSaved={(p) => nav(`/centrale/${p.id}`)} />}
       {modal?.ticket && <TicketModal ticket={modal.ticket} onClose={() => setModal(null)} onSaved={reload} />}

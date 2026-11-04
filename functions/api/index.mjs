@@ -11,6 +11,7 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { SCHEMA, DEFAULT_CHECKLIST } from './schema.mjs';
 import { seedDemo } from './demo.mjs';
 import { PERMISSION_GROUPS, ALL_PERMISSIONS, DEFAULT_ROLES } from './permissions.mjs';
+import { parseConfigFile } from './importers.mjs';
 import { COMPANY_FIELDS, DOC_KINDS, RESETS as RESET_LABEL, defaultNumbering, counterPeriod, formatNumber, checkNumbering } from './documents.mjs';
 
 // DATE columns as plain 'YYYY-MM-DD' strings (no timezone shifting)
@@ -145,7 +146,7 @@ const MANUAL_KINDS = {
   ticket: ['komentarz'],
   panel: ['notatka', 'serwis', 'aktualizacja oprogramowania', 'zmiana konfiguracji', 'usterka', 'naprawa'],
 };
-const AUTO_KINDS = ['utworzenie', 'zmiana', 'status', 'usunięcie', 'plik', 'protokół'];
+const AUTO_KINDS = ['utworzenie', 'zmiana', 'status', 'usunięcie', 'plik', 'protokół', 'import'];
 const ENTITY_TABLE = { device: 'devices', ticket: 'tickets', panel: 'panels' };
 
 // ---------- file storage (private prefix, presigned downloads) ----------
@@ -668,6 +669,96 @@ const actions = {
     if (row) await logEvent({ site_id: row.site_id, entity: 'device', entity_id: row.id, entity_label: ENTITY_LABEL.device(row), kind: 'usunięcie', summary: 'Usunięto element z ewidencji', user });
     return { ok: true };
   },
+  // --- import of elements from a panel configuration file ---
+  // Parse a stored config file (file_id) or an uploaded one (filename + base64 data) and propose the target site per element.
+  async 'devices.importPreview'({ panel_id, file_id, filename, data }, user) {
+    need(user, 'panels.view');
+    const panel = await one('SELECT * FROM panels WHERE id=$1', [panel_id]);
+    if (!panel) throw new HttpError(404, 'Nie znaleziono centrali');
+    const sites = await panelSites(panel_id);
+    if (!sites.length) throw new HttpError(400, 'Centrala nie obsługuje żadnego obiektu — najpierw przypisz obiekty');
+    let buf;
+    if (file_id) {
+      need(user, 'configs.download');
+      const f = await one('SELECT * FROM panel_files WHERE id=$1 AND panel_id=$2', [file_id, panel_id]);
+      if (!f) throw new HttpError(404, 'Nie znaleziono pliku');
+      const obj = await s3.send(new GetObjectCommand({ Bucket: BUCKET, Key: f.s3_key }));
+      buf = Buffer.from(await obj.Body.transformToByteArray());
+      filename = f.filename;
+    } else {
+      if (!data) throw new HttpError(400, 'Brak pliku');
+      buf = Buffer.from(data, 'base64');
+      if (buf.length > MAX_FILE) throw new HttpError(400, 'Plik jest za duży (maks. 4 MB)');
+    }
+    let parsed;
+    try { parsed = parseConfigFile(buf, filename); } catch (e) { throw new HttpError(400, e.message); }
+    if (!parsed.rows.length) throw new HttpError(400, 'W pliku nie znaleziono skonfigurowanych elementów');
+
+    // target site: a site whose name appears in the element's zone description, else the loop's usual site
+    const words = (t) => ` ${String(t || '').toLowerCase().replace(/[^0-9a-ząćęłńóśźż]+/g, ' ')} `;
+    const bySite = sites.map((x) => ({ id: x.id, key: words(x.name) })).filter((x) => x.key.trim());
+    for (const r of parsed.rows) {
+      const hits = bySite.filter((x) => words(r.location).includes(x.key));
+      r.site_id = hits.length === 1 ? hits[0].id : null;
+    }
+    const loopSite = {};
+    for (const r of parsed.rows.filter((x) => x.site_id)) {
+      const m = (loopSite[r.loop_no] ||= {});
+      m[r.site_id] = (m[r.site_id] || 0) + 1;
+    }
+    for (const r of parsed.rows.filter((x) => !x.site_id)) {
+      const m = loopSite[r.loop_no];
+      r.site_id = m ? Number(Object.entries(m).sort((a, b) => b[1] - a[1])[0][0]) : sites.length === 1 ? sites[0].id : null;
+    }
+    // elements already in the register (same site, loop and address) get updated instead of duplicated
+    const existing = await q(`SELECT id, site_id, loop_no, address_no, type FROM devices WHERE site_id = ANY($1)`, [sites.map((x) => x.id)]);
+    for (const r of parsed.rows) {
+      r.existing_id = existing.find((d) => d.site_id === r.site_id && d.loop_no === r.loop_no && d.address_no === r.address_no)?.id || null;
+    }
+    return { ...parsed, filename, sites, existing: existing.map((d) => `${d.site_id}:${d.loop_no}:${d.address_no}`),
+      panel: { id: panel.id, name: panel.name, manufacturer: panel.manufacturer } };
+  },
+  async 'devices.import'({ panel_id, rows, update, filename }, user) {
+    need(user, 'panels.view');
+    const panel = await one('SELECT * FROM panels WHERE id=$1', [panel_id]);
+    if (!panel) throw new HttpError(404, 'Nie znaleziono centrali');
+    const sites = await panelSites(panel_id);
+    const allowed = new Map(sites.map((x) => [x.id, x.name]));
+    if (!Array.isArray(rows) || !rows.length) throw new HttpError(400, 'Nie wybrano elementów do importu');
+    if (rows.length > 2000) throw new HttpError(400, 'Za dużo elementów w jednym imporcie (maks. 2000)');
+    const counts = {};
+    let created = 0, updated = 0, skipped = 0;
+    for (const r of rows) {
+      const siteId = Number(r.site_id);
+      if (!allowed.has(siteId)) throw new HttpError(400, 'Element przypisano do obiektu, którego ta centrala nie obsługuje');
+      if (!r.type?.trim() || !Number.isInteger(r.address_no)) throw new HttpError(400, 'Każdy element musi mieć typ i adres');
+      const fields = {
+        site_id: siteId, type: r.type.trim(), loop_no: Number.isInteger(r.loop_no) ? r.loop_no : null, address_no: r.address_no,
+        manufacturer: r.manufacturer || panel.manufacturer || null, model: r.model || null, serial: r.serial || null,
+        location: r.location?.trim() || null, notes: r.notes || null,
+      };
+      const before = await one('SELECT * FROM devices WHERE site_id=$1 AND loop_no IS NOT DISTINCT FROM $2 AND address_no=$3 ORDER BY id LIMIT 1',
+        [siteId, fields.loop_no, fields.address_no]);
+      if (before && !update) { skipped++; continue; }
+      if (before) {
+        // keep what was entered by hand when the file has nothing better
+        const patch = { id: before.id, ...fields, model: fields.model || before.model, manufacturer: before.manufacturer || fields.manufacturer,
+          location: fields.location || before.location, notes: before.notes || fields.notes };
+        const row = await save('devices', DEVICE_COLS, patch);
+        await logChange('device', before, row, without(DEVICE_COLS, 'site_id'), user);
+        updated++;
+      } else {
+        await save('devices', DEVICE_COLS, { ...fields, quantity: 1, status: 'sprawne' });
+        created++;
+      }
+      counts[siteId] = (counts[siteId] || 0) + 1;
+    }
+    const per = Object.entries(counts).map(([id, n]) => `${allowed.get(Number(id))}: ${n}`).join(', ');
+    await logEvent({ site_id: null, entity: 'panel', entity_id: panel.id, entity_label: ENTITY_LABEL.panel(panel), kind: 'import', user,
+      summary: `Import elementów z pliku${filename ? ` ${filename}` : ''}: dodano ${created}, zaktualizowano ${updated}${skipped ? `, pominięto ${skipped}` : ''}${per ? ` (${per})` : ''}` });
+    return { created, updated, skipped };
+  },
+
   // Service entry for a device (test, repair, replacement…); may update the device itself.
   async 'devices.event'({ device_id, kind, event_date, comment, replace_by, serial, photos }, user) {
     const def = DEVICE_EVENTS[kind];
@@ -1011,6 +1102,7 @@ const REQUIRES = {
   'sites.list': ['sites.view', 'tickets.view', 'inspections.view'],
   'sites.get': ['sites.view'], 'sites.save': ['sites.edit'], 'sites.delete': ['sites.delete'],
   'devices.save': ['devices.edit'], 'devices.delete': ['devices.delete'], 'devices.event': ['history.add'],
+  'devices.importPreview': ['devices.edit'], 'devices.import': ['devices.edit'],
   'history.add': ['history.add'],
   'panels.get': ['panels.view'], 'panels.save': ['panels.edit'], 'panels.linkSite': ['panels.edit'], 'panels.unlinkSite': ['panels.edit'],
   'panels.delete': ['panels.delete'], 'panels.upload': ['configs.upload'], 'panels.fileUrl': ['configs.download'],

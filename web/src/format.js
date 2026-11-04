@@ -69,7 +69,7 @@ export const DEVICE_EVENT_KINDS = [
   { value: 'notatka', label: 'Notatka' },
 ];
 export const PANEL_EVENT_KINDS = ['serwis', 'zmiana konfiguracji', 'aktualizacja oprogramowania', 'usterka', 'naprawa', 'notatka'];
-export const AUTO_KINDS = ['utworzenie', 'zmiana', 'status', 'usunięcie', 'plik', 'protokół'];
+export const AUTO_KINDS = ['utworzenie', 'zmiana', 'status', 'usunięcie', 'plik', 'protokół', 'import'];
 export const SYSTEM_STATES = ['sprawny', 'sprawny z uwagami', 'niesprawny — wymaga dalszych prac'];
 
 export function fmtSize(b) {
