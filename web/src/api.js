@@ -1,5 +1,5 @@
-// Direct function URL — avoids the CloudFront hop on every request.
-const API_BASE = 'https://7q6j2fwcomxtozoayhpckexmke0wbqdz.lambda-url.eu-central-1.on.aws/';
+// Same-origin API endpoint by default. Override only for local development.
+const API_BASE = import.meta.env.VITE_API_BASE || '/api/';
 const TOKEN_KEY = 'crm-ssp-token';
 
 export const getToken = () => localStorage.getItem(TOKEN_KEY);

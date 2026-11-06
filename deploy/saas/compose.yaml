@@ -1,0 +1,50 @@
+# LAN test only. Uses existing PostgreSQL with a separate test database.
+services:
+  crm-api:
+    build:
+      context: ../..
+      dockerfile: deploy/saas/Dockerfile.api
+    environment:
+      PORT: "8080"
+      DATABASE_URL: ${CRM_DATABASE_URL:?Set CRM_DATABASE_URL to an isolated TEST database}
+      STORAGE_BUCKET: ${CRM_STORAGE_BUCKET:?Set CRM_STORAGE_BUCKET; S3-compatible storage setup pending}
+      AWS_REGION: ${CRM_AWS_REGION:-eu-central-1}
+      DATABASE_SSL_MODE: disable
+      CRM_BOOTSTRAP_TOKEN: ${CRM_BOOTSTRAP_TOKEN:?Set a random bootstrap token}
+      S3_ENDPOINT: http://crm-minio:9000
+      AWS_ACCESS_KEY_ID: ${CRM_MINIO_USER:?Set CRM_MINIO_USER}
+      AWS_SECRET_ACCESS_KEY: ${CRM_MINIO_PASSWORD:?Set CRM_MINIO_PASSWORD}
+    networks: [crm-private, postgres-existing]
+    depends_on: [crm-minio]
+    restart: unless-stopped
+
+  crm-minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    command: server /data --console-address ':9001'
+    environment:
+      MINIO_ROOT_USER: ${CRM_MINIO_USER:?Set CRM_MINIO_USER}
+      MINIO_ROOT_PASSWORD: ${CRM_MINIO_PASSWORD:?Set CRM_MINIO_PASSWORD}
+    volumes:
+      - crm-minio-data:/data
+    networks: [crm-private]
+    restart: unless-stopped
+
+  crm-web:
+    build:
+      context: ../..
+      dockerfile: deploy/saas/Dockerfile.web
+    depends_on: [crm-api]
+    ports:
+      - "127.0.0.1:8280:80"
+    networks: [crm-private]
+    restart: unless-stopped
+
+volumes:
+  crm-minio-data:
+
+networks:
+  crm-private:
+    driver: bridge
+  postgres-existing:
+    external: true
+    name: postgres_default
