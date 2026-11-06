@@ -15,9 +15,7 @@ services:
       AWS_ACCESS_KEY_ID: ${CRM_MINIO_USER:?Set CRM_MINIO_USER}
       AWS_SECRET_ACCESS_KEY: ${CRM_MINIO_PASSWORD:?Set CRM_MINIO_PASSWORD}
     networks: [crm-private, postgres-existing]
-    depends_on:
-      crm-minio:
-        condition: service_healthy
+    depends_on: [crm-minio]
     restart: unless-stopped
 
   crm-minio:
@@ -29,11 +27,6 @@ services:
     volumes:
       - crm-minio-data:/data
     networks: [crm-private]
-    healthcheck:
-      test: ['CMD', 'mc', 'ready', 'local']
-      interval: 10s
-      timeout: 5s
-      retries: 10
     restart: unless-stopped
 
   crm-web:
