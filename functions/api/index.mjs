@@ -18,7 +18,6 @@ import { DEFAULT_DEVICE_CODES, COMPANY_FIELDS, DOC_KINDS, RESETS as RESET_LABEL,
 pg.types.setTypeParser(1082, (v) => v);
 
 const CORS = {
-  'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 };
@@ -39,7 +38,7 @@ function db() {
   if (!pool) {
     pool = new pg.Pool({
       connectionString: process.env.DATABASE_URL,
-      ssl: { rejectUnauthorized: false },
+      ssl: process.env.DATABASE_SSL_MODE === 'disable' ? false : { rejectUnauthorized: true },
       max: 1,
       idleTimeoutMillis: 60_000,
       connectionTimeoutMillis: 8_000,
@@ -1123,7 +1122,13 @@ const actions = {
 };
 
 // Bootstrap the first administrator — works only while the users table is empty.
-actions['setup.admin'] = async ({ email, name, password }) => {
+actions['setup.admin'] = async ({ email, name, password, setupToken }) => {
+  const expected = process.env.CRM_BOOTSTRAP_TOKEN;
+  if (!expected || !setupToken || typeof setupToken !== 'string' ||
+      Buffer.byteLength(setupToken) !== Buffer.byteLength(expected) ||
+      !crypto.timingSafeEqual(Buffer.from(setupToken), Buffer.from(expected))) {
+    throw new HttpError(403, 'Inicjalizacja administratora wyłączona');
+  }
   if (await one('SELECT 1 FROM users LIMIT 1')) throw new HttpError(400, 'Administrator już istnieje');
   return publicUser(await save('users', ['email', 'name', 'role', 'password_hash'],
     { email: email.toLowerCase(), name, role: 'admin', password_hash: hashPassword(password) }));
@@ -1167,6 +1172,6 @@ export async function handler(event) {
     if (err instanceof HttpError) return json({ error: err.message }, err.status);
     console.error(err);
     if (err.code === '23503') return json({ error: 'Powiązany rekord nie istnieje' }, 400);
-    return json({ error: 'Błąd serwera: ' + err.message }, 500);
+    return json({ error: 'Wewnętrzny błąd serwera' }, 500);
   }
 }
