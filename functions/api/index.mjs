@@ -157,7 +157,13 @@ const ENTITY_TABLE = { device: 'devices', ticket: 'tickets', panel: 'panels' };
 
 // ---------- file storage (private prefix, presigned downloads) ----------
 
-const s3 = new S3Client({ region: process.env.AWS_REGION || 'eu-central-1' });
+const s3 = new S3Client({
+  region: process.env.AWS_REGION || 'eu-central-1',
+  ...(process.env.S3_ENDPOINT ? {
+    endpoint: process.env.S3_ENDPOINT,
+    forcePathStyle: true,
+  } : {}),
+});
 const BUCKET = process.env.STORAGE_BUCKET;
 const MAX_FILE = 4 * 1024 * 1024; // function URL payload limit is 6 MB incl. base64 overhead
 
