@@ -9,7 +9,9 @@ services:
       DATABASE_URL: ${CRM_DATABASE_URL:?Set CRM_DATABASE_URL to an isolated TEST database}
       STORAGE_BUCKET: ${CRM_STORAGE_BUCKET:?Set CRM_STORAGE_BUCKET; S3-compatible storage setup pending}
       AWS_REGION: ${CRM_AWS_REGION:-eu-central-1}
-    networks: [crm-private]
+      DATABASE_SSL_MODE: disable
+      CRM_BOOTSTRAP_TOKEN: ${CRM_BOOTSTRAP_TOKEN:-}
+    networks: [crm-private, postgres-existing]
     restart: unless-stopped
 
   crm-web:
@@ -25,3 +27,6 @@ services:
 networks:
   crm-private:
     driver: bridge
+  postgres-existing:
+    external: true
+    name: postgres_default
