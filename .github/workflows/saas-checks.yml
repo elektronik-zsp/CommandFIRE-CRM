@@ -1,0 +1,35 @@
+name: SaaS pilot checks
+on:
+  push:
+    branches: [saas-development]
+  pull_request:
+    paths:
+      - 'web/**'
+      - 'functions/api/**'
+      - 'deploy/saas/**'
+      - '.github/workflows/saas-checks.yml'
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci
+      - name: Build web
+        working-directory: web
+        run: npm run build
+      - name: Check API syntax
+        run: |
+          node --check functions/api/index.mjs
+          node --check functions/api/server.mjs
+      - name: Validate Docker Compose
+        run: |
+          CRM_DATABASE_URL=postgresql://test:test@postgres:5432/commandfire_crm_test \
+          CRM_STORAGE_BUCKET=placeholder \
+          docker compose -f deploy/saas/compose.yaml config --quiet
